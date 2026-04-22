@@ -1,0 +1,1 @@
+"""Pathology pipeline example."""

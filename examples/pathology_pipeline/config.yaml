@@ -1,0 +1,27 @@
+# Sample pathology pipeline config for the BioModel Monitor CLI.
+#
+# Usage:
+#   biomodel-monitor run --config examples/pathology_pipeline/config.yaml
+#
+# This config expects pre-built JSONL batches under data/. Use the
+# run_example.py script for a one-shot synthetic demo.
+
+batch: examples/pathology_pipeline/data/current.jsonl
+
+baseline:
+  from_batch: examples/pathology_pipeline/data/reference.jsonl
+  cohort: screening_2025
+
+contract:
+  model_id: patho-tumor-v1
+  model_version: "1.4.0"
+  expected_features: [tile_brightness, tile_focus]
+  expected_sites: [A, B, C]
+
+threshold: 0.5
+min_subgroup_n: 30
+
+alerts:
+  min_severity: warn
+
+output_dir: reports_out

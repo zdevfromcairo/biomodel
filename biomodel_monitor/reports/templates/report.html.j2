@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>BioModel Monitor Report — {{ batch.metadata.batch_id }}</title>
+<style>
+ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+ h1, h2 { border-bottom: 1px solid #ddd; padding-bottom: .25rem; }
+ table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+ th, td { padding: .4rem .6rem; border-bottom: 1px solid #eee; text-align: left; font-size: 14px; }
+ th { background: #fafafa; }
+ .sev-ok { color: #1a7f37; }
+ .sev-warn { color: #b07d00; font-weight: 600; }
+ .sev-alert { color: #b30000; font-weight: 700; }
+ .meta { color: #666; font-size: 13px; }
+ code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>BioModel Monitor Report</h1>
+<p class="meta">
+  Batch <code>{{ batch.metadata.batch_id }}</code> ·
+  Model <code>{{ batch.metadata.model_id }}</code> @
+  <code>{{ batch.metadata.model_version }}</code> ·
+  Records {{ batch.records | length }} ·
+  Generated {{ generated_at }}
+</p>
+
+<h2>Summary</h2>
+{% if alerts %}
+<p>This batch produced <b>{{ alerts | length }}</b> alert(s).</p>
+<table>
+  <tr><th>Severity</th><th>Category</th><th>Title</th><th>Score</th></tr>
+  {% for a in alerts %}
+  <tr>
+    <td class="sev-{{ a.severity }}">{{ a.severity }}</td>
+    <td>{{ a.category }}</td>
+    <td>{{ a.title }}</td>
+    <td>{{ "%.2f"|format(a.score) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No alerts. The model appears to be behaving within configured tolerances on this batch.</p>
+{% endif %}
+
+<h2>Drift</h2>
+{% if drift_results %}
+<table>
+  <tr><th>Metric</th><th>Kind</th><th>Value</th><th>p-value</th><th>Severity</th></tr>
+  {% for d in drift_results %}
+  <tr>
+    <td>{{ d.name }}</td><td>{{ d.kind }}</td>
+    <td>{{ "%.4f"|format(d.value) }}</td>
+    <td>{{ d.p_value if d.p_value is not none else "—" }}</td>
+    <td class="sev-{{ d.severity }}">{{ d.severity }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p>No drift metrics computed (no baseline supplied).</p>{% endif %}
+
+<h2>Calibration</h2>
+{% if calibration_results %}
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Severity</th></tr>
+  {% for c in calibration_results %}
+  <tr><td>{{ c.name }}</td><td>{{ "%.4f"|format(c.value) }}</td>
+      <td class="sev-{{ c.severity }}">{{ c.severity }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<p>No calibration metrics computed (no ground truth supplied).</p>{% endif %}
+
+<h2>Subgroup degradation</h2>
+{% if subgroup_results %}
+<table>
+  <tr><th>Dimension</th><th>Value</th><th>n</th><th>Metric</th><th>Value</th>
+      <th>Δ vs global</th><th>Severity</th></tr>
+  {% for s in subgroup_results %}
+  <tr>
+    <td>{{ s.dimension }}</td><td>{{ s.value }}</td><td>{{ s.n }}</td>
+    <td>{{ s.metric }}</td><td>{{ "%.3f"|format(s.metric_value) }}</td>
+    <td>{{ "%+.3f"|format(s.delta) }}</td>
+    <td class="sev-{{ s.severity }}">{{ s.severity }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p>No subgroup slices evaluated.</p>{% endif %}
+
+<h2>Plausibility violations</h2>
+{% if plausibility_violations %}
+<table>
+  <tr><th>Rule</th><th>Record</th><th>Severity</th><th>Message</th></tr>
+  {% for v in plausibility_violations %}
+  <tr>
+    <td>{{ v.rule }}</td><td>{{ v.record_id or "—" }}</td>
+    <td class="sev-{{ v.severity }}">{{ v.severity }}</td>
+    <td>{{ v.message }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p>No plausibility violations.</p>{% endif %}
+
+<h2>Silent failure signatures</h2>
+{% if silent_failure_results %}
+<table>
+  <tr><th>Signature</th><th>Value</th><th>Severity</th></tr>
+  {% for r in silent_failure_results %}
+  <tr>
+    <td>{{ r.name }}</td><td>{{ "%.4f"|format(r.value) }}</td>
+    <td class="sev-{{ r.severity }}">{{ r.severity }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p>No silent failure signatures evaluated.</p>{% endif %}
+
+<p class="meta">Produced by BioModel Monitor v{{ version }}.</p>
+</body>
+</html>

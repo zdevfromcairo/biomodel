@@ -1,0 +1,77 @@
+# BioModel Monitor Report
+
+**Batch:** `{{ batch.metadata.batch_id }}`
+**Model:** `{{ batch.metadata.model_id }}` @ `{{ batch.metadata.model_version }}`
+**Generated:** {{ generated_at }}
+**Records:** {{ batch.records | length }}
+
+## Summary
+
+{% if alerts %}
+This batch produced **{{ alerts | length }}** alert(s).
+
+| Severity | Category | Title | Score |
+|---|---|---|---|
+{% for a in alerts %}| {{ a.severity }} | {{ a.category }} | {{ a.title }} | {{ "%.2f"|format(a.score) }} |
+{% endfor %}
+{% else %}
+No alerts. The model appears to be behaving within configured tolerances on this batch.
+{% endif %}
+
+## Drift
+
+{% if drift_results %}
+| Metric | Kind | Value | p-value | Severity |
+|---|---|---|---|---|
+{% for d in drift_results %}| {{ d.name }} | {{ d.kind }} | {{ "%.4f"|format(d.value) }} | {{ d.p_value if d.p_value is not none else "—" }} | {{ d.severity }} |
+{% endfor %}
+{% else %}
+No drift metrics computed (no baseline supplied).
+{% endif %}
+
+## Calibration
+
+{% if calibration_results %}
+| Metric | Value | Severity |
+|---|---|---|
+{% for c in calibration_results %}| {{ c.name }} | {{ "%.4f"|format(c.value) }} | {{ c.severity }} |
+{% endfor %}
+{% else %}
+No calibration metrics computed (no ground truth supplied).
+{% endif %}
+
+## Subgroup degradation
+
+{% if subgroup_results %}
+| Dimension | Value | n | Metric | Value | Δ vs global | Severity |
+|---|---|---|---|---|---|---|
+{% for s in subgroup_results %}| {{ s.dimension }} | {{ s.value }} | {{ s.n }} | {{ s.metric }} | {{ "%.3f"|format(s.metric_value) }} | {{ "%+.3f"|format(s.delta) }} | {{ s.severity }} |
+{% endfor %}
+{% else %}
+No subgroup slices evaluated.
+{% endif %}
+
+## Plausibility violations
+
+{% if plausibility_violations %}
+| Rule | Record | Severity | Message |
+|---|---|---|---|
+{% for v in plausibility_violations %}| {{ v.rule }} | {{ v.record_id or "—" }} | {{ v.severity }} | {{ v.message }} |
+{% endfor %}
+{% else %}
+No plausibility violations.
+{% endif %}
+
+## Silent failure signatures
+
+{% if silent_failure_results %}
+| Signature | Value | Severity |
+|---|---|---|
+{% for r in silent_failure_results %}| {{ r.name }} | {{ "%.4f"|format(r.value) }} | {{ r.severity }} |
+{% endfor %}
+{% else %}
+No silent failure signatures evaluated.
+{% endif %}
+
+---
+*Report produced by BioModel Monitor v{{ version }}.*
