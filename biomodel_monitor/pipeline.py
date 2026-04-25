@@ -15,7 +15,12 @@ from typing import Any
 import numpy as np
 
 from biomodel_monitor import __version__
-from biomodel_monitor.alerts.engine import Alert, AlertConfig, AlertEngine
+from biomodel_monitor.alerts.engine import (
+    Alert,
+    AlertConfig,
+    AlertEngine,
+    severity_score,
+)
 from biomodel_monitor.baselines.store import Baseline
 from biomodel_monitor.metrics.calibration import (
     brier_score,
@@ -36,6 +41,11 @@ from biomodel_monitor.metrics.silent_failure import (
 from biomodel_monitor.metrics.subgroup import slice_metrics
 from biomodel_monitor.reports.render import render_report
 from biomodel_monitor.schema.models import PredictionBatch
+from biomodel_monitor.store.repository import (
+    AlertRecord,
+    BatchRecord,
+    MetricsStore,
+)
 
 DEFAULT_DIMENSIONS = ("site_id", "scanner_id", "stain", "tissue_type", "cohort")
 
@@ -48,6 +58,8 @@ class PipelineResult:
     plausibility_violations: list[dict] = field(default_factory=list)
     silent_failure_results: list[dict] = field(default_factory=list)
     alerts: list[Alert] = field(default_factory=list)
+    run_id: str | None = None
+    persistence_by_key: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
@@ -57,6 +69,8 @@ class PipelineResult:
             "plausibility_violations": self.plausibility_violations,
             "silent_failure_results": self.silent_failure_results,
             "alerts": [a.as_dict() for a in self.alerts],
+            "run_id": self.run_id,
+            "persistence_by_key": self.persistence_by_key,
         }
 
 
@@ -256,8 +270,15 @@ def run_pipeline(
     dimensions: tuple[str, ...] = DEFAULT_DIMENSIONS,
     threshold: float = 0.5,
     min_subgroup_n: int = 30,
+    store: MetricsStore | None = None,
+    persistence_window: int = 5,
 ) -> PipelineResult:
-    """Run the full Phase-1 monitoring pipeline on a batch."""
+    """Run the full Phase-1 monitoring pipeline on a batch.
+
+    If ``store`` is provided, the run, alerts, and headline metrics are
+    persisted, and severity scores incorporate run-history persistence
+    (a repeating alert is escalated above a one-off).
+    """
     rule_registry = rule_registry or builtin_pathology_rules()
     engine = AlertEngine(alert_config)
 
@@ -289,6 +310,66 @@ def run_pipeline(
     alerts += engine.from_silent_failure([_Bag(r) for r in silent_rows])
     alerts = engine.deduplicate(alerts)
 
+    run_id: str | None = None
+    persistence_by_key: dict[str, int] = {}
+    if store is not None:
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        store.upsert_batch(
+            BatchRecord(
+                batch_id=batch.metadata.batch_id,
+                model_id=batch.metadata.model_id,
+                model_version=batch.metadata.model_version,
+                n_records=len(batch.records),
+                created_at=_dt.now(_tz.utc).isoformat(timespec="seconds"),
+                source=batch.metadata.source,
+            )
+        )
+        run = store.create_run(
+            batch_id=batch.metadata.batch_id,
+            model_id=batch.metadata.model_id,
+            model_version=batch.metadata.model_version,
+        )
+        run_id = run.run_id
+        # rescale severity by historical persistence
+        for a in alerts:
+            n = store.alert_persistence(
+                model_id=batch.metadata.model_id,
+                model_version=batch.metadata.model_version,
+                key=a.key, last_n_runs=persistence_window,
+            )
+            persistence_by_key[a.key] = n + 1
+            a.score = severity_score(a.severity, persistence=n + 1)
+        alerts.sort(key=lambda a: -a.score)
+        # persist
+        store.insert_alerts(
+            AlertRecord(
+                run_id=run_id,
+                batch_id=batch.metadata.batch_id,
+                model_id=batch.metadata.model_id,
+                model_version=batch.metadata.model_version,
+                key=a.key, title=a.title, severity=a.severity,
+                score=a.score, category=a.category,
+                root_cause_hint=a.root_cause_hint,
+                persistence=persistence_by_key[a.key],
+                details_json=json.dumps(a.details, default=str),
+            )
+            for a in alerts
+        )
+        store.set_run_alerts(run_id, len(alerts))
+        for row in drift_rows + calibration_rows + silent_rows:
+            store.insert_metric(
+                run_id=run_id,
+                batch_id=batch.metadata.batch_id,
+                model_id=batch.metadata.model_id,
+                model_version=batch.metadata.model_version,
+                name=row.get("name", row.get("kind", "metric")),
+                kind=row.get("kind", "metric"),
+                value=float(row["value"]) if isinstance(row.get("value"), (int, float)) else None,
+                severity=row.get("severity"),
+                extra={k: v for k, v in row.items() if k not in {"value", "severity"}},
+            )
+
     return PipelineResult(
         drift_results=drift_rows,
         calibration_results=calibration_rows,
@@ -296,6 +377,8 @@ def run_pipeline(
         plausibility_violations=[v.as_dict() for v in plausibility],
         silent_failure_results=silent_rows,
         alerts=alerts,
+        run_id=run_id,
+        persistence_by_key=persistence_by_key,
     )
 
 

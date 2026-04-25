@@ -1,0 +1,54 @@
+# Changelog
+
+## v0.3.0 — Beyond pathology + advanced statistics
+
+### Added
+- **Multi-class calibration** — top-label ECE, class-wise (one-vs-rest) ECE,
+  and multiclass Brier (`metrics/calibration_multiclass.py`).
+- **Bootstrap confidence intervals** — one- and two-sample non-parametric CIs
+  with deterministic seeding (`metrics/bootstrap.py`).
+- **Fairness metrics** — demographic-parity, equal-opportunity, and
+  equalized-odds gaps with per-group breakdown and small-N guards
+  (`metrics/fairness.py`).
+- **Radiology rule pack** — laterality consistency, anatomy prior
+  (region-in-FOV), modality cross-checks (`metrics/domain_rules.py`).
+- **Multimodal omics rule pack** — expression bounds, pathway sign-consistency
+  (`metrics/domain_rules.py`).
+- **Cross-model dependency graph** — declare upstream→downstream edges,
+  attribute downstream alerts to upstream regressions (`dependency/graph.py`).
+- **Regulatory / QMS export bundle** — copies the report set, embeds the
+  alert + annotation audit trail, and writes a SHA-256 manifest;
+  `verify-bundle` detects post-hoc edits (`reports/regulatory.py`).
+- CLI: `export-bundle`, `verify-bundle`.
+
+## v0.2.0 — Operational monitoring
+
+### Added
+- **Persistent SQLite metrics + incident store** — batches, runs, alerts,
+  annotations, headline metrics, baselines (`store/repository.py`).
+- **Persistence-aware severity** — alert scores are escalated when a key
+  recurs across recent runs.
+- **Incident workspace** — ack / resolve / comment / label
+  (`tp` / `fp` / `needs_review`), with a durable audit trail
+  (`incidents/workspace.py`).
+- **Threshold auto-tuning** — read labeled history and propose per-category
+  thresholds at a target recall (`alerts/threshold_tuner.py`).
+- **Rolling baseline learner with explicit promotion** — per cohort and per
+  site; promotion is intentionally manual (`baselines/learner.py`).
+- **Near-real-time ingestion** — polling `DirectoryWatcher` + at-least-once
+  `FilesystemQueue` (`scheduler/watcher.py`).
+- **Pluggable notification channels** — file (JSON-Lines), webhook
+  (caller-supplied transport), email (caller-supplied SMTP delivery)
+  (`notifications/channels.py`).
+- CLI: `baseline-update`, `baseline-promote`, `incidents list/annotate`,
+  `tune-thresholds`, `watch`, `process-queue`.
+
+### Changed
+- `run_pipeline` now optionally takes a `MetricsStore`; when supplied it
+  persists the run and rescales alert scores by historical persistence.
+- `BatchMetadata.source` is now propagated into the persistent store.
+
+## v0.1.0 — Phase 1
+- Initial offline batch monitor: schema, ingest, drift / calibration /
+  subgroup / plausibility / silent-failure metrics, alert engine, HTML +
+  Markdown reports, Streamlit dashboard, CLI, pathology example.

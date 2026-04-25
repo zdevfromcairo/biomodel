@@ -6,7 +6,7 @@ from biomodel_monitor.schema.models import (
     PredictionRecord,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "BatchMetadata",

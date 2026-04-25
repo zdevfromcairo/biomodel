@@ -11,9 +11,15 @@ import click
 import yaml
 
 from biomodel_monitor.alerts.engine import AlertConfig
+from biomodel_monitor.alerts.threshold_tuner import propose_thresholds
+from biomodel_monitor.baselines.learner import RollingBaselineLearner, promote_candidate
 from biomodel_monitor.baselines.store import Baseline, BaselineStore
+from biomodel_monitor.incidents.workspace import IncidentWorkspace
 from biomodel_monitor.ingest.loader import load_batch, validate_against_contract
 from biomodel_monitor.pipeline import run_pipeline, write_outputs
+from biomodel_monitor.reports.regulatory import export_bundle, verify_bundle
+from biomodel_monitor.scheduler.watcher import DirectoryWatcher, FilesystemQueue
+from biomodel_monitor.store.repository import MetricsStore
 
 
 def _load_config(path: str | Path) -> dict[str, Any]:
@@ -24,12 +30,26 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _open_store(cfg: dict) -> MetricsStore | None:
+    store_cfg = cfg.get("store")
+    if not store_cfg:
+        return None
+    if isinstance(store_cfg, str):
+        return MetricsStore(store_cfg)
+    if isinstance(store_cfg, dict) and store_cfg.get("path"):
+        return MetricsStore(store_cfg["path"])
+    return None
+
+
 @click.group()
 @click.version_option()
 def main() -> None:
-    """BioModel Monitor — offline batch monitoring for medical AI."""
+    """BioModel Monitor — batch + near-real-time monitoring for medical AI."""
 
 
+# --------------------------------------------------------------------------- #
+# run
+# --------------------------------------------------------------------------- #
 @main.command("run")
 @click.option("--config", "config_path", required=True, type=click.Path(exists=True))
 def run_cmd(config_path: str) -> None:
@@ -55,7 +75,6 @@ def run_cmd(config_path: str) -> None:
                 bcfg.get("cohort"),
             )
             if baseline is None:
-                # Fall back to literal file if precise model+cohort not found
                 bp = Path(bcfg["path"])
                 if bp.exists():
                     data = json.loads(bp.read_text())
@@ -63,6 +82,21 @@ def run_cmd(config_path: str) -> None:
         elif "from_batch" in bcfg:
             ref_batch = load_batch(bcfg["from_batch"])
             baseline = Baseline.from_batch(ref_batch, cohort=bcfg.get("cohort"))
+
+    metrics_store = _open_store(cfg)
+
+    # if a promoted baseline lives in the metrics store and no explicit baseline was
+    # supplied, prefer that.
+    if baseline is None and metrics_store is not None:
+        promoted = metrics_store.get_promoted_baseline(
+            model_id=batch.metadata.model_id,
+            model_version=batch.metadata.model_version,
+            cohort=(bcfg or {}).get("cohort") if isinstance(bcfg, dict) else None,
+        )
+        if promoted:
+            keep = {"model_id", "model_version", "cohort", "n", "scores", "features",
+                    "sites", "scanners", "stains", "tissue_types"}
+            baseline = Baseline(**{k: promoted["payload"].get(k) for k in keep})
 
     alert_cfg = AlertConfig(
         min_severity=cfg.get("alerts", {}).get("min_severity", "warn"),
@@ -74,15 +108,23 @@ def run_cmd(config_path: str) -> None:
         alert_config=alert_cfg,
         threshold=float(cfg.get("threshold", 0.5)),
         min_subgroup_n=int(cfg.get("min_subgroup_n", 30)),
+        store=metrics_store,
     )
     out_dir = cfg.get("output_dir", "reports_out")
     paths = write_outputs(batch, result, out_dir=out_dir)
     click.echo(f"Records: {len(batch)}")
     click.echo(f"Alerts:  {len(result.alerts)}")
+    if result.run_id:
+        click.echo(f"Run ID:  {result.run_id}")
     for k, v in paths.items():
         click.echo(f"  {k}: {v}")
+    if metrics_store is not None:
+        metrics_store.close()
 
 
+# --------------------------------------------------------------------------- #
+# baseline (legacy, JSON-on-disk)
+# --------------------------------------------------------------------------- #
 @main.command("baseline")
 @click.option("--input", "input_path", required=True, type=click.Path(exists=True))
 @click.option("--store-dir", required=True, type=click.Path())
@@ -94,6 +136,266 @@ def baseline_cmd(input_path: str, store_dir: str, cohort: str | None) -> None:
     bl = Baseline.from_batch(batch, cohort=cohort)
     p = store.save(bl)
     click.echo(f"Saved baseline: {p}")
+
+
+# --------------------------------------------------------------------------- #
+# baseline-update / baseline-promote (rolling learner)
+# --------------------------------------------------------------------------- #
+@main.command("baseline-update")
+@click.option("--store", "store_path", required=True, type=click.Path())
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True))
+@click.option("--cohort", default=None)
+@click.option("--site-id", "site_id", default=None)
+@click.option("--max-window", default=5000, type=int)
+def baseline_update_cmd(
+    store_path: str, input_path: str, cohort: str | None,
+    site_id: str | None, max_window: int,
+) -> None:
+    """Fold a new batch into the candidate baseline (rolling learner)."""
+    store = MetricsStore(store_path)
+    try:
+        batch = load_batch(input_path)
+        learner = RollingBaselineLearner(
+            store=store,
+            model_id=batch.metadata.model_id,
+            model_version=batch.metadata.model_version,
+            cohort=cohort, site_id=site_id, max_window=max_window,
+        )
+        payload = learner.update(batch)
+        click.echo(f"Candidate baseline updated. n={payload['n']}")
+    finally:
+        store.close()
+
+
+@main.command("baseline-promote")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--cohort", default=None)
+@click.option("--site-id", "site_id", default=None)
+@click.option("--min-n", default=200, type=int)
+def baseline_promote_cmd(
+    store_path: str, model_id: str, model_version: str,
+    cohort: str | None, site_id: str | None, min_n: int,
+) -> None:
+    """Promote the most recent candidate baseline matching this scope."""
+    store = MetricsStore(store_path)
+    try:
+        bid = promote_candidate(
+            store=store, model_id=model_id, model_version=model_version,
+            cohort=cohort, site_id=site_id, min_n=min_n,
+        )
+        click.echo(f"Promoted baseline id={bid}")
+    finally:
+        store.close()
+
+
+# --------------------------------------------------------------------------- #
+# incidents (open / annotate)
+# --------------------------------------------------------------------------- #
+@main.group("incidents")
+def incidents_group() -> None:
+    """Annotate, label, ack, resolve, and review alerts."""
+
+
+@incidents_group.command("list")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+def incidents_list_cmd(store_path: str, model_id: str, model_version: str) -> None:
+    """Print open incidents, sorted by severity then persistence."""
+    store = MetricsStore(store_path)
+    try:
+        ws = IncidentWorkspace(store)
+        for s in ws.summarize_open(model_id=model_id, model_version=model_version):
+            click.echo(
+                f"[{s.severity.upper():5}] persistence={s.persistence} "
+                f"score={s.score:.2f} key={s.key}  {s.title}"
+            )
+    finally:
+        store.close()
+
+
+@incidents_group.command("annotate")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--key", required=True, help="Alert key")
+@click.option(
+    "--kind",
+    type=click.Choice(["ack", "resolve", "comment", "label"]),
+    required=True,
+)
+@click.option("--label", default=None, type=click.Choice(["tp", "fp", "needs_review"]))
+@click.option("--note", default=None)
+@click.option("--actor", default=None)
+def incidents_annotate_cmd(
+    store_path: str, model_id: str, model_version: str, key: str,
+    kind: str, label: str | None, note: str | None, actor: str | None,
+) -> None:
+    """Add an annotation to an alert."""
+    store = MetricsStore(store_path)
+    try:
+        ws = IncidentWorkspace(store)
+        if kind == "ack":
+            ws.acknowledge(
+                model_id=model_id, model_version=model_version,
+                alert_key=key, actor=actor, note=note,
+            )
+        elif kind == "resolve":
+            ws.resolve(
+                model_id=model_id, model_version=model_version,
+                alert_key=key, actor=actor, note=note,
+            )
+        elif kind == "comment":
+            if not note:
+                raise click.UsageError("--note is required for kind=comment")
+            ws.comment(
+                model_id=model_id, model_version=model_version,
+                alert_key=key, note=note, actor=actor,
+            )
+        elif kind == "label":
+            if not label:
+                raise click.UsageError("--label is required for kind=label")
+            ws.label(
+                model_id=model_id, model_version=model_version,
+                alert_key=key, label=label, actor=actor, note=note,
+            )
+        click.echo("ok")
+    finally:
+        store.close()
+
+
+# --------------------------------------------------------------------------- #
+# tune-thresholds
+# --------------------------------------------------------------------------- #
+@main.command("tune-thresholds")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--target-recall", default=0.9, type=float)
+def tune_thresholds_cmd(
+    store_path: str, model_id: str, model_version: str, target_recall: float,
+) -> None:
+    """Propose per-category alert thresholds from labeled history."""
+    store = MetricsStore(store_path)
+    try:
+        proposals = propose_thresholds(
+            store, model_id=model_id, model_version=model_version,
+            target_recall=target_recall,
+        )
+        click.echo(json.dumps([p.as_dict() for p in proposals], indent=2))
+    finally:
+        store.close()
+
+
+# --------------------------------------------------------------------------- #
+# watch (near-real-time)
+# --------------------------------------------------------------------------- #
+@main.command("watch")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True))
+@click.option("--directory", required=True, type=click.Path())
+@click.option("--queue", "queue_path", required=True, type=click.Path())
+@click.option("--max-iters", default=None, type=int, help="Bound the loop (testing).")
+def watch_cmd(config_path: str, directory: str, queue_path: str, max_iters: int | None) -> None:
+    """Watch a directory for new batches and append them to a filesystem queue.
+
+    Pair this with ``biomodel-monitor process-queue`` running on the same queue
+    file. The split keeps ingestion (cheap) decoupled from analysis (slow).
+    """
+    cfg = _load_config(config_path)  # noqa: F841 — reserved for future filters
+    queue = FilesystemQueue(Path(queue_path))
+
+    def on_event(ev) -> None:
+        queue.enqueue(str(ev.path))
+        click.echo(f"queued {ev.path}")
+
+    watcher = DirectoryWatcher(Path(directory), on_event=on_event)
+    if max_iters is None:
+        watcher.run()
+    else:
+        watcher.run(max_iters=max_iters)
+
+
+@main.command("process-queue")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True))
+@click.option("--queue", "queue_path", required=True, type=click.Path())
+@click.option("--max-items", default=None, type=int)
+def process_queue_cmd(config_path: str, queue_path: str, max_items: int | None) -> None:
+    """Drain a filesystem queue of batch files, running the pipeline on each."""
+    cfg = _load_config(config_path)
+    queue = FilesystemQueue(Path(queue_path))
+    metrics_store = _open_store(cfg)
+    n = 0
+    try:
+        while True:
+            item = queue.claim()
+            if item is None:
+                break
+            try:
+                batch = load_batch(item)
+                run_pipeline(batch, store=metrics_store)
+                queue.acknowledge(item)
+                click.echo(f"processed {item}")
+                n += 1
+            except Exception as e:  # noqa: BLE001
+                queue.fail(item)
+                click.echo(f"failed {item}: {e}", err=True)
+            if max_items is not None and n >= max_items:
+                break
+    finally:
+        if metrics_store is not None:
+            metrics_store.close()
+    click.echo(f"processed {n} item(s)")
+
+
+# --------------------------------------------------------------------------- #
+# export-bundle / verify-bundle
+# --------------------------------------------------------------------------- #
+@main.command("export-bundle")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--report-dir", required=True, type=click.Path(exists=True))
+@click.option("--out-dir", required=True, type=click.Path())
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--batch-id", required=True)
+def export_bundle_cmd(
+    store_path: str, report_dir: str, out_dir: str,
+    model_id: str, model_version: str, batch_id: str,
+) -> None:
+    """Build a regulatory-export bundle (report + audit trail + manifest)."""
+    rd = Path(report_dir)
+    paths: dict[str, Path] = {}
+    for ext in (".html", ".md", ".json"):
+        candidate = rd / f"{batch_id}{ext}"
+        if candidate.exists():
+            paths[ext.lstrip(".")] = candidate
+    if not paths:
+        raise click.UsageError(
+            f"no report files found for batch {batch_id} in {report_dir}"
+        )
+    store = MetricsStore(store_path)
+    try:
+        bundle = export_bundle(
+            out_dir=out_dir, report_paths=paths,
+            model_id=model_id, model_version=model_version,
+            batch_id=batch_id, store=store,
+        )
+    finally:
+        store.close()
+    click.echo(f"bundle: {bundle}")
+
+
+@main.command("verify-bundle")
+@click.argument("bundle_dir", type=click.Path(exists=True))
+def verify_bundle_cmd(bundle_dir: str) -> None:
+    ok, problems = verify_bundle(bundle_dir)
+    if ok:
+        click.echo("OK")
+    else:
+        for p in problems:
+            click.echo(p, err=True)
+        raise click.exceptions.Exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover
