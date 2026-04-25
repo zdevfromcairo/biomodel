@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from email.message import EmailMessage
@@ -24,6 +27,7 @@ class NotificationResult:
     delivered: bool
     error: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    attempts: int = 1
 
     def as_dict(self) -> dict:
         return {
@@ -31,6 +35,7 @@ class NotificationResult:
             "delivered": self.delivered,
             "error": self.error,
             "payload": self.payload,
+            "attempts": self.attempts,
         }
 
 
@@ -52,27 +57,167 @@ class FileChannel:
         return True
 
 
+def hmac_sign(body: bytes, secret: str, *, ts: str | None = None) -> dict[str, str]:
+    """Return webhook headers carrying an HMAC-SHA256 signature.
+
+    The signature covers ``ts.body`` so a recipient can validate freshness *and*
+    integrity. This is the same pattern used by Stripe / GitHub webhooks.
+    """
+    ts = ts or str(int(time.time()))
+    msg = f"{ts}.".encode() + body
+    sig = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+    return {
+        "X-BioModel-Timestamp": ts,
+        "X-BioModel-Signature": f"v1={sig}",
+    }
+
+
 @dataclass
 class WebhookChannel:
     """Webhook channel; HTTP delivery is delegated to ``transport``.
 
-    ``transport(url, body) -> int`` should return an HTTP status code; any 2xx
-    is success. The default transport raises so users opt in explicitly.
+    ``transport(url, body, headers=None) -> int`` should return an HTTP status
+    code; any 2xx is success. Older transports without the ``headers`` kwarg
+    are still supported.
+
+    If ``secret`` is set, requests are signed with HMAC-SHA256 and the signing
+    headers are passed to ``transport``. If ``max_retries > 0`` the channel
+    retries with exponential backoff on transport exception or non-2xx
+    response.
     """
 
     url: str
     name: str = "webhook"
-    transport: Callable[[str, dict[str, Any]], int] | None = None
+    transport: Callable[..., int] | None = None
+    secret: str | None = None
+    max_retries: int = 0
+    backoff_base: float = 0.5
+    sleep: Callable[[float], None] = time.sleep
 
-    def send(self, alert: Alert, context: dict[str, Any]) -> bool:
+    def _post(self, body: dict[str, Any]) -> int:
         if self.transport is None:
             raise RuntimeError(
                 "WebhookChannel requires a transport callable; the core package "
                 "does not depend on an HTTP client."
             )
-        body = {"alert": alert.as_dict(), "context": context}
-        status = int(self.transport(self.url, body))
-        return 200 <= status < 300
+        body_bytes = json.dumps(body, default=str).encode()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.secret:
+            headers.update(hmac_sign(body_bytes, self.secret))
+        # Older transports may not accept headers; degrade gracefully.
+        try:
+            return int(self.transport(self.url, body, headers=headers))
+        except TypeError:
+            return int(self.transport(self.url, body))
+
+    def _send_body_with_retry(self, body: dict[str, Any]) -> bool:
+        attempt = 0
+        last_err: Exception | None = None
+        while attempt <= self.max_retries:
+            attempt += 1
+            try:
+                status = self._post(body)
+                if 200 <= status < 300:
+                    return True
+                last_err = RuntimeError(f"HTTP {status}")
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+            if attempt <= self.max_retries:
+                self.sleep(self.backoff_base * (2 ** (attempt - 1)))
+        if last_err:
+            raise last_err
+        return False
+
+    def send(self, alert: Alert, context: dict[str, Any]) -> bool:
+        return self._send_body_with_retry({"alert": alert.as_dict(), "context": context})
+
+
+def _slack_blocks(alert: Alert, context: dict[str, Any]) -> dict[str, Any]:
+    color = {"alert": "#d50000", "warn": "#ff9800", "ok": "#43a047"}.get(alert.severity, "#607d8b")
+    return {
+        "attachments": [{
+            "color": color,
+            "title": f"[{alert.severity.upper()}] {alert.title}",
+            "fields": [
+                {"title": "Category", "value": alert.category, "short": True},
+                {"title": "Score", "value": f"{alert.score:.2f}", "short": True},
+                {"title": "Key", "value": alert.key, "short": False},
+                {"title": "Hint", "value": alert.root_cause_hint or "-", "short": False},
+            ],
+            "footer": context.get("model_id", "biomodel-monitor"),
+        }],
+    }
+
+
+@dataclass
+class SlackChannel(WebhookChannel):
+    """Slack incoming-webhook channel.
+
+    Builds a Slack-flavoured payload and delegates HTTP delivery to ``transport``.
+    """
+
+    name: str = "slack"
+
+    def send(self, alert: Alert, context: dict[str, Any]) -> bool:
+        return self._send_body_with_retry(_slack_blocks(alert, context or {}))
+
+
+@dataclass
+class PagerDutyChannel(WebhookChannel):
+    """PagerDuty Events API v2 channel (incident creation).
+
+    Maps alert.severity → PagerDuty severity. ``alert`` and ``warn`` create or
+    update an incident; ``ok`` resolves it (PagerDuty `event_action`).
+    """
+
+    routing_key: str = ""
+    name: str = "pagerduty"
+    url: str = "https://events.pagerduty.com/v2/enqueue"
+
+    def send(self, alert: Alert, context: dict[str, Any]) -> bool:
+        action = "resolve" if alert.severity == "ok" else "trigger"
+        body = {
+            "routing_key": self.routing_key,
+            "event_action": action,
+            "dedup_key": alert.key,
+            "payload": {
+                "summary": alert.title,
+                "severity": {"alert": "critical", "warn": "warning", "ok": "info"}.get(
+                    alert.severity, "info"
+                ),
+                "source": context.get("model_id", "biomodel-monitor"),
+                "component": alert.category,
+                "custom_details": {**alert.as_dict(), "context": context},
+            },
+        }
+        return self._send_body_with_retry(body)
+
+
+@dataclass
+class TeamsChannel(WebhookChannel):
+    """Microsoft Teams incoming-webhook channel (MessageCard format)."""
+
+    name: str = "teams"
+
+    def send(self, alert: Alert, context: dict[str, Any]) -> bool:
+        color = {"alert": "D50000", "warn": "FF9800", "ok": "43A047"}.get(alert.severity, "607D8B")
+        body = {
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "themeColor": color,
+            "summary": alert.title,
+            "title": f"[{alert.severity.upper()}] {alert.title}",
+            "sections": [{
+                "facts": [
+                    {"name": "Category", "value": alert.category},
+                    {"name": "Score", "value": f"{alert.score:.2f}"},
+                    {"name": "Key", "value": alert.key},
+                    {"name": "Hint", "value": alert.root_cause_hint or "-"},
+                ],
+                "markdown": False,
+            }],
+        }
+        return self._send_body_with_retry(body)
 
 
 @dataclass

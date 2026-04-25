@@ -1,24 +1,34 @@
 """Notification channels for emitted alerts.
 
-Phase 2 ships pluggable channels with safe defaults: a JSON-Lines file sink
-that always works on-prem, and a webhook channel that delegates HTTP delivery
-to a caller-supplied function so we don't bake a network library into the core
-package. An email channel is a stub that builds the MIME message; integration
-with the org's relay is left to the deployment.
+Channels ship pluggable with safe defaults: a JSON-Lines file sink that
+always works on-prem, and HTTP-delegating channels (webhook, Slack,
+PagerDuty, Teams) that take an injected ``transport`` so the core package
+doesn't bake an HTTP library in. Webhooks support HMAC-SHA256 signing and
+exponential-backoff retries (added in v0.4).
 """
 
 from biomodel_monitor.notifications.channels import (
+    Channel,
     EmailChannel,
     FileChannel,
     NotificationDispatcher,
     NotificationResult,
+    PagerDutyChannel,
+    SlackChannel,
+    TeamsChannel,
     WebhookChannel,
+    hmac_sign,
 )
 
 __all__ = [
+    "Channel",
     "EmailChannel",
     "FileChannel",
     "NotificationDispatcher",
     "NotificationResult",
+    "PagerDutyChannel",
+    "SlackChannel",
+    "TeamsChannel",
     "WebhookChannel",
+    "hmac_sign",
 ]

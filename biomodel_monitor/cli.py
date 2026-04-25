@@ -398,5 +398,114 @@ def verify_bundle_cmd(bundle_dir: str) -> None:
         raise click.exceptions.Exit(1)
 
 
+# --------------------------------------------------------------------------- #
+# serve (v0.4)
+# --------------------------------------------------------------------------- #
+@main.command("serve")
+@click.option("--store", "store_path", required=True, type=click.Path())
+@click.option("--host", default="0.0.0.0")  # noqa: S104 — explicit binding
+@click.option("--port", default=8080, type=int)
+@click.option("--api-key", "api_keys", multiple=True, help="Repeatable. Required unless --no-auth.")
+@click.option("--no-auth", is_flag=True, help="Disable API-key auth (development only).")
+@click.option("--cors", "cors", multiple=True, help="Allowed CORS origin (repeatable).")
+@click.option("--log-level", default="INFO")
+def serve_cmd(
+    store_path: str, host: str, port: int,
+    api_keys: tuple[str, ...], no_auth: bool, cors: tuple[str, ...], log_level: str,
+) -> None:
+    """Start the BioModel Monitor HTTP API server (FastAPI + uvicorn)."""
+    from biomodel_monitor.server import AppSettings, run_uvicorn
+    if not no_auth and not api_keys:
+        raise click.UsageError("Must supply at least one --api-key, or pass --no-auth.")
+    settings = AppSettings(
+        store_path=store_path, api_keys=list(api_keys),
+        require_auth=not no_auth, cors_origins=list(cors), log_level=log_level,
+    )
+    click.echo(f"Serving on http://{host}:{port}  (auth={'on' if not no_auth else 'OFF'})")
+    run_uvicorn(settings, host=host, port=port)
+
+
+# --------------------------------------------------------------------------- #
+# model-card (v0.5)
+# --------------------------------------------------------------------------- #
+@main.command("model-card")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--out", "out_path", required=False, type=click.Path())
+def model_card_cmd(
+    store_path: str, model_id: str, model_version: str, out_path: str | None,
+) -> None:
+    """Generate a Markdown model card from the persistent store."""
+    from biomodel_monitor.intelligence.modelcard import build_model_card
+    store = MetricsStore(store_path)
+    try:
+        text = build_model_card(store, model_id=model_id, model_version=model_version)
+    finally:
+        store.close()
+    if out_path:
+        Path(out_path).write_text(text)
+        click.echo(f"wrote {out_path}")
+    else:
+        click.echo(text)
+
+
+# --------------------------------------------------------------------------- #
+# explain (v0.5)
+# --------------------------------------------------------------------------- #
+@main.command("explain")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--metric", required=True, help="Metric name to explain (e.g. psi).")
+def explain_cmd(
+    store_path: str, model_id: str, model_version: str, metric: str,
+) -> None:
+    """Run changepoint + anomaly analysis on a metric's history."""
+    from biomodel_monitor.intelligence.anomaly import robust_zscore
+    from biomodel_monitor.intelligence.changepoint import detect_changepoints
+    store = MetricsStore(store_path)
+    try:
+        rows = store.metric_history(
+            model_id=model_id, model_version=model_version, name=metric, limit=500,
+        )
+    finally:
+        store.close()
+    series = [float(r["value"]) for r in rows if r.get("value") is not None]
+    out = {
+        "metric": metric,
+        "n_points": len(series),
+        "changepoints": detect_changepoints(series).as_dict(),
+        "anomaly": robust_zscore(series).as_dict() if series else None,
+    }
+    click.echo(json.dumps(out, indent=2))
+
+
+# --------------------------------------------------------------------------- #
+# whatif (v0.5)
+# --------------------------------------------------------------------------- #
+@main.command("whatif")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True))
+@click.option("--baseline", "baseline_path", required=False, type=click.Path(exists=True))
+@click.option("--exclude", "excludes", multiple=True,
+              help="dim=value pair to exclude. Repeatable. e.g. --exclude scanner_id=ScannerY")
+def whatif_cmd(input_path: str, baseline_path: str | None, excludes: tuple[str, ...]) -> None:
+    """Recompute drift after counterfactually excluding cohorts/sites/scanners."""
+    from biomodel_monitor.intelligence.whatif import counterfactual_drift
+    batch = load_batch(input_path)
+    baseline = None
+    if baseline_path:
+        data = json.loads(Path(baseline_path).read_text())
+        baseline = Baseline(**data)
+    exclude_map: dict[str, list[str]] = {}
+    for e in excludes:
+        if "=" not in e:
+            raise click.UsageError(f"--exclude must be dim=value, got: {e}")
+        dim, val = e.split("=", 1)
+        exclude_map.setdefault(dim.strip(), []).append(val.strip())
+    out = counterfactual_drift(batch, baseline, exclude=exclude_map)
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
