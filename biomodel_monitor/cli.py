@@ -408,10 +408,15 @@ def verify_bundle_cmd(bundle_dir: str) -> None:
 @click.option("--api-key", "api_keys", multiple=True, help="Repeatable. Required unless --no-auth.")
 @click.option("--no-auth", is_flag=True, help="Disable API-key auth (development only).")
 @click.option("--cors", "cors", multiple=True, help="Allowed CORS origin (repeatable).")
+@click.option(
+    "--batch-root", "batch_root", default=None, type=click.Path(),
+    help="Whitelisted directory for batch-path inputs to /runs and /whatif.",
+)
 @click.option("--log-level", default="INFO")
 def serve_cmd(
     store_path: str, host: str, port: int,
-    api_keys: tuple[str, ...], no_auth: bool, cors: tuple[str, ...], log_level: str,
+    api_keys: tuple[str, ...], no_auth: bool, cors: tuple[str, ...],
+    batch_root: str | None, log_level: str,
 ) -> None:
     """Start the BioModel Monitor HTTP API server (FastAPI + uvicorn)."""
     from biomodel_monitor.server import AppSettings, run_uvicorn
@@ -420,6 +425,7 @@ def serve_cmd(
     settings = AppSettings(
         store_path=store_path, api_keys=list(api_keys),
         require_auth=not no_auth, cors_origins=list(cors), log_level=log_level,
+        batch_root=batch_root,
     )
     click.echo(f"Serving on http://{host}:{port}  (auth={'on' if not no_auth else 'OFF'})")
     run_uvicorn(settings, host=host, port=port)

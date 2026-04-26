@@ -16,3 +16,4 @@ htmlcov/
 .DS_Store
 out/
 reports_out/
+docs/changelog.md

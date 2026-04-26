@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.5.0 — Intelligence & Explanation
+
+### Added
+- **Root-cause attribution** (`intelligence/attribution.py`) — for any alert,
+  rank which dimension/value contributed most. Score is
+  `|delta_from_pooled_mean| × share_of_records` with a small-N guard.
+- **Changepoint detection** (`intelligence/changepoint.py`) — divisive
+  segmentation with a CUSUM-style mean-shift score. Pinpoints *when* drift
+  began, not just that it's there.
+- **Counterfactual drift / "what-if"** (`intelligence/whatif.py`) — recompute
+  output drift after dropping records that match `dim=value` filters.
+- **Robust z-score anomaly** (`intelligence/anomaly.py`) — median / MAD-based
+  anomaly score layered onto every metric history.
+- **Active-learning incident queue** (`intelligence/active_learning.py`) —
+  rank open incidents by expected information gain so labeling effort is
+  spent where it most improves threshold tuning.
+- **Auto model card** (`intelligence/modelcard.py`) — generate a publishable
+  Markdown model card from what's already in the store.
+- **CLI**: `biomodel-monitor explain`, `whatif`, `model-card`.
+
+### Changed
+- New `intelligence` subpackage; surface re-exports via
+  `biomodel_monitor.intelligence`.
+
+## v0.4.0 — Server & Stack
+
+### Added
+- **FastAPI HTTP server** (`server/`) — REST endpoints for runs, alerts,
+  annotations, incidents, baselines, metric history, model card, what-if,
+  and changepoint analysis. OpenAPI at `/docs`.
+- **API-key auth** with `X-API-Key` header; multiple keys allowed; CORS
+  origins configurable via `--cors` or `BIOMODEL_CORS`.
+- **Structured JSON access logs** for every request (ts, method, path,
+  status, duration_ms).
+- **Prometheus `/metrics`** endpoint, zero external dependency. Counters and
+  histograms for HTTP traffic and alert emission.
+- **Storage Protocol** (`store/backend.py`) decoupling the rest of the system
+  from the concrete adapter.
+- **Postgres adapter** (`store/postgres.py`) implementing the same `Storage`
+  Protocol as SQLite, with a `?` → `%s` placeholder shim so the existing SQL
+  is reused verbatim.
+- **Notification channels**: `SlackChannel`, `PagerDutyChannel` (Events API
+  v2 with severity mapping and `dedup_key`), `TeamsChannel` (MessageCard).
+- **HMAC-SHA256 signed webhooks** (`X-BioModel-Timestamp`, `X-BioModel-Signature: v1=…`).
+- **Exponential-backoff retry** in the webhook base class.
+- **Dockerfile + docker-compose.yml** spinning up `server` + `watcher` +
+  `dashboard` against a shared volume.
+- **CLI**: `biomodel-monitor serve`.
+
+### Changed
+- `pyproject.toml` now offers `server`, `postgres`, and `docs` extras.
+
 ## v0.3.0 — Beyond pathology + advanced statistics
 
 ### Added

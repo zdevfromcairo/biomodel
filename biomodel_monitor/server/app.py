@@ -22,6 +22,10 @@ class AppSettings:
     log_level: str = "INFO"
     cors_origins: list[str] = field(default_factory=list)
     require_auth: bool = True
+    # Filesystem root that ``/runs`` and ``/whatif`` may load batches from.
+    # If unset, batch-path inputs are rejected — the operator must whitelist a
+    # directory before the server can read arbitrary files.
+    batch_root: str | None = None
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "AppSettings":
@@ -29,13 +33,18 @@ class AppSettings:
         e = env if env is not None else os.environ
         keys_raw = e.get("BIOMODEL_API_KEYS", "")
         keys = [k.strip() for k in keys_raw.split(",") if k.strip()]
+        # Treat empty strings the same as a missing variable: fall through to
+        # the documented default (both flags default-on).
+        prom_raw = (e.get("BIOMODEL_PROMETHEUS") or "1").strip().lower()
+        auth_raw = (e.get("BIOMODEL_REQUIRE_AUTH") or "1").strip().lower()
         return cls(
             store_path=e.get("BIOMODEL_STORE_PATH", "biomodel.db"),
             api_keys=keys,
-            enable_prometheus=e.get("BIOMODEL_PROMETHEUS", "1") not in ("0", "false", ""),
+            enable_prometheus=prom_raw not in ("0", "false", "no", "off"),
             log_level=e.get("BIOMODEL_LOG_LEVEL", "INFO"),
             cors_origins=[o for o in e.get("BIOMODEL_CORS", "").split(",") if o],
-            require_auth=e.get("BIOMODEL_REQUIRE_AUTH", "1") not in ("0", "false", ""),
+            require_auth=auth_raw not in ("0", "false", "no", "off"),
+            batch_root=e.get("BIOMODEL_BATCH_ROOT") or None,
         )
 
 
@@ -133,6 +142,37 @@ def create_app(
     logger = _configure_logging(settings.log_level)
     registry = PrometheusRegistry() if settings.enable_prometheus else None
 
+    def _safe_batch_path(p: str) -> Path:
+        """Resolve a caller-supplied batch path against the configured root.
+
+        If ``settings.batch_root`` is unset, *no* paths are accepted — the
+        server refuses to read arbitrary files. Otherwise the path is resolved
+        and required to live under the root (defeats path traversal).
+        """
+        if not settings.batch_root:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Server is not configured to load batches from disk. "
+                    "Set BIOMODEL_BATCH_ROOT (or AppSettings.batch_root) to a "
+                    "whitelisted directory."
+                ),
+            )
+        root = Path(settings.batch_root).resolve()
+        try:
+            resolved = (root / p).resolve() if not Path(p).is_absolute() else Path(p).resolve()
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"invalid path: {e}") from e
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="path is outside the configured batch_root",
+            ) from exc
+        if not resolved.is_file():
+            raise HTTPException(status_code=404, detail=f"no such file: {resolved}")
+        return resolved
+
     def _default_store_factory() -> MetricsStore:
         return MetricsStore(settings.store_path)
 
@@ -143,7 +183,8 @@ def create_app(
         from biomodel_monitor.pipeline import run_pipeline
 
         def _runner(batch_path: str, *, store, cohort=None, threshold=0.5, min_subgroup_n=30):
-            batch = load_batch(batch_path)
+            safe = _safe_batch_path(batch_path)
+            batch = load_batch(str(safe))
             return run_pipeline(
                 batch, store=store, threshold=threshold, min_subgroup_n=min_subgroup_n,
             )
@@ -421,10 +462,12 @@ def create_app(
     ):
         from biomodel_monitor.baselines.store import Baseline
         from biomodel_monitor.ingest.loader import load_batch
-        batch = load_batch(req.batch_path)
+        safe = _safe_batch_path(req.batch_path)
+        batch = load_batch(str(safe))
         baseline = None
         if req.baseline_path:
-            data = json.loads(Path(req.baseline_path).read_text())
+            safe_bl = _safe_batch_path(req.baseline_path)
+            data = json.loads(safe_bl.read_text())
             baseline = Baseline(**data)
         return JSONResponse(counterfactual_drift(batch, baseline, exclude=req.exclude))
 

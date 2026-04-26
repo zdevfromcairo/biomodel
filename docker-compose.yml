@@ -1,0 +1,61 @@
+# Local stack: API server + watcher + Streamlit dashboard, all sharing one
+# SQLite store on a named volume. For production, swap the store for Postgres
+# via the BIOMODEL_STORE_DSN env var on the `server` service.
+version: "3.9"
+
+services:
+  server:
+    build: .
+    image: biomodel-monitor:local
+    container_name: biomodel-server
+    ports:
+      - "8080:8080"
+    environment:
+      BIOMODEL_STORE_PATH: /data/biomodel.db
+      BIOMODEL_LOG_LEVEL: INFO
+    volumes:
+      - biomodel-data:/data
+    restart: unless-stopped
+
+  watcher:
+    image: biomodel-monitor:local
+    container_name: biomodel-watcher
+    depends_on:
+      - server
+    command:
+      - watch
+      - --config
+      - /etc/biomodel/config.yaml
+      - --directory
+      - /incoming
+      - --queue
+      - /data/queue.json
+    volumes:
+      - biomodel-data:/data
+      - ./incoming:/incoming
+      - ./config:/etc/biomodel:ro
+    restart: unless-stopped
+
+  dashboard:
+    image: biomodel-monitor:local
+    container_name: biomodel-dashboard
+    depends_on:
+      - server
+    ports:
+      - "8501:8501"
+    entrypoint:
+      - python
+      - -m
+      - streamlit
+      - run
+      - biomodel_monitor/dashboard/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    environment:
+      BIOMODEL_STORE_PATH: /data/biomodel.db
+    volumes:
+      - biomodel-data:/data
+    restart: unless-stopped
+
+volumes:
+  biomodel-data:

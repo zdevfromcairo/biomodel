@@ -375,6 +375,7 @@ def test_app_settings_from_env():
         "BIOMODEL_REQUIRE_AUTH": "0",
         "BIOMODEL_CORS": "https://app.example.com",
         "BIOMODEL_LOG_LEVEL": "DEBUG",
+        "BIOMODEL_BATCH_ROOT": "/data/batches",
     })
     assert s.api_keys == ["a", "b"]
     assert s.store_path == "/tmp/x.db"
@@ -382,6 +383,47 @@ def test_app_settings_from_env():
     assert s.require_auth is False
     assert s.cors_origins == ["https://app.example.com"]
     assert s.log_level == "DEBUG"
+    assert s.batch_root == "/data/batches"
+
+
+def test_app_settings_empty_strings_use_defaults():
+    """Empty env vars should not silently flip on/off semantics."""
+    s = AppSettings.from_env({
+        "BIOMODEL_PROMETHEUS": "",
+        "BIOMODEL_REQUIRE_AUTH": "",
+        "BIOMODEL_BATCH_ROOT": "",
+    })
+    # Both default-on; empty string falls through to default.
+    assert s.enable_prometheus is True
+    assert s.require_auth is True
+    # Empty batch_root is treated as unset.
+    assert s.batch_root is None
+
+
+def test_whatif_rejects_paths_when_batch_root_unset(fake_store):
+    s = AppSettings(api_keys=["k"], require_auth=True, batch_root=None)
+    app = create_app(s, store_factory=lambda: fake_store)
+    c = TestClient(app)
+    r = c.post(
+        "/whatif", headers={"X-API-Key": "k"},
+        json={"batch_path": "/etc/passwd", "exclude": {}},
+    )
+    assert r.status_code == 400
+    assert "batch_root" in r.json()["detail"]
+
+
+def test_whatif_blocks_path_traversal_outside_root(fake_store, tmp_path):
+    s = AppSettings(
+        api_keys=["k"], require_auth=True, batch_root=str(tmp_path),
+    )
+    app = create_app(s, store_factory=lambda: fake_store)
+    c = TestClient(app)
+    # Try to escape the configured root.
+    r = c.post(
+        "/whatif", headers={"X-API-Key": "k"},
+        json={"batch_path": "../../etc/passwd", "exclude": {}},
+    )
+    assert r.status_code in (400, 404)
 
 
 if __name__ == "__main__":  # pragma: no cover

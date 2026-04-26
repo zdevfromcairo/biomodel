@@ -1,132 +1,204 @@
-# BioModel Monitor
+<h1 align="center">BioModel Monitor</h1>
 
-**Post-deployment monitoring and assurance for multimodal medical AI.**
+<p align="center">
+  <strong>Post-deployment monitoring & assurance for multimodal medical AI.</strong><br/>
+  Drift, calibration, fairness, plausibility, silent-failure, and regulatory bundles —
+  with a service, an HTTP API, and an intelligence layer that <em>explains</em> the alerts.
+</p>
 
-Generic ML monitoring tracks uptime and aggregate accuracy. Medical AI fails
-differently — models can appear stable while becoming biologically implausible,
-clinically miscalibrated, or distributionally brittle across sites, scanners,
-protocols, and populations. BioModel Monitor is a specialized monitoring layer
-that speaks the language of biomedical model risk.
+<p align="center">
+  <a href="https://github.com/zdevfromcairo/biomodel/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/zdevfromcairo/biomodel/ci.yml?branch=main&label=CI"/></a>
+  <a href="https://github.com/zdevfromcairo/biomodel/actions/workflows/docs.yml"><img alt="docs" src="https://img.shields.io/github/actions/workflow/status/zdevfromcairo/biomodel/docs.yml?branch=main&label=docs"/></a>
+  <a href="https://zdevfromcairo.github.io/biomodel/"><img alt="site" src="https://img.shields.io/badge/site-mkdocs--material-009485"/></a>
+  <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab"/>
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
+  <img alt="version" src="https://img.shields.io/badge/version-0.5.0-success"/>
+  <img alt="tests" src="https://img.shields.io/badge/tests-145%20passing-brightgreen"/>
+</p>
 
-This repository contains:
+<p align="center">
+  <a href="https://zdevfromcairo.github.io/biomodel/quickstart/">Quickstart</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/architecture/">Architecture</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/server/">Server</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/intelligence/">Intelligence</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/metric_library/">Metrics</a>
+</p>
 
-- **Phase 1** (`v0.1`) — offline batch monitor for pathology and
-  multimodal-omics-adjacent models.
-- **Phase 2** (`v0.2`) — operational monitoring: persistent metrics store,
-  persistence-aware severity, incident workspace, threshold auto-tuning,
-  rolling per-site baselines with explicit promotion, near-real-time
-  ingestion, and pluggable notification channels.
-- **Phase 3** (`v0.3`) — beyond pathology: radiology + multimodal-omics rule
-  packs, multi-class calibration, fairness metrics, bootstrap CIs, cross-model
-  dependency attribution, and signed regulatory export bundles.
+---
 
-## What it does
+## Why
 
-Given a batch of model predictions plus per-prediction metadata (site, scanner,
-stain, tissue type, cohort, optional ground truth), BioModel Monitor:
+Generic ML monitoring tracks uptime and aggregate accuracy. **Medical AI fails differently.**
+Models can appear stable on a dashboard while becoming biologically implausible, clinically
+miscalibrated, or distributionally brittle across sites, scanners, protocols, and populations.
 
-1. **Validates** the schema and metadata.
-2. **Computes drift** of inputs, outputs, and modality variables vs. a baseline.
-3. **Measures calibration** (ECE, MCE, Brier) overall and per cohort.
-4. **Slices subgroups** (site / scanner / stain / tissue / custom) with
-   small-N-aware Wilson confidence intervals.
-5. **Runs domain plausibility rules** (e.g. tumor probability vs. tissue area,
-   marker co-expression, slide/tile consistency).
-6. **Detects silent failure signatures** (entropy collapse, confidence/accuracy
-   decoupling, prediction drift without input drift).
-7. **Raises alerts** with severity, dedup, and root-cause hints.
-8. **Renders reports** (Markdown + HTML) and powers an optional Streamlit
-   dashboard.
+BioModel Monitor is a specialized monitoring layer that speaks the language of biomedical
+model risk and answers the only question a model owner cares about:
 
-The first version is built to answer one question for a model owner:
+> *Is my model still behaving acceptably, and if not, exactly **where** is it breaking,
+> **why**, and **what** would fix it?*
 
-> *Is my model still behaving acceptably, and if not, exactly where is it
-> breaking?*
+## Highlights
 
-## Install
+- **Domain-aware metrics** — drift, calibration (binary + multiclass), fairness, subgroup
+  with Wilson CIs, plausibility rule packs (pathology, radiology, omics), silent-failure
+  signatures, bootstrap CIs.
+- **Service, not a script** *(v0.4)* — FastAPI HTTP server, OpenAPI, API-key auth,
+  structured JSON logs, Prometheus `/metrics`, signed webhooks, **Slack / PagerDuty /
+  Microsoft Teams**, **SQLite or Postgres**, Docker Compose.
+- **Explains itself** *(v0.5)* — per-alert root-cause attribution, changepoint detection,
+  counterfactual *what-if* drift, robust-z anomaly score, active-learning incident queue,
+  auto-generated model cards.
+- **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
+  annotations, persistence-aware severity, per-cohort fairness summary.
 
-```bash
-pip install -e ".[dev,parquet,dashboard]"
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources
+      B[Batch CSV / Parquet / JSONL]
+      S[Streaming source]
+    end
+    B --> W[Watcher]
+    S --> W
+    W --> Q[(Queue)]
+    Q --> P[Pipeline]
+    P --> M[(Metrics store<br/>SQLite / Postgres)]
+    P --> A[Alert engine]
+    A --> N{{Notifications<br/>Slack · PagerDuty · Teams · Webhook}}
+    M --> API[FastAPI server]
+    M --> D[Streamlit dashboard]
+    M --> R[Reports + signed bundle]
+    M --> I[Intelligence<br/>attribution · changepoint · whatif · model card]
+    API --> EXT[External tooling]
 ```
 
-## Quick start
+## Quickstart
 
 ```bash
+# Install (with all optional extras)
+pip install -e ".[dev,parquet,dashboard,server]"
+
 # Run the bundled pathology example end-to-end
 python -m examples.pathology_pipeline.run_example
 
-# Or use the CLI with a YAML config
+# Or via the CLI with a YAML config
 biomodel-monitor run --config examples/pathology_pipeline/config.yaml
 ```
 
-The run produces an HTML and Markdown report under `reports_out/` plus a
-JSON metrics bundle.
+The run produces an HTML + Markdown report under `reports_out/` plus a JSON metrics bundle.
 
-## Operational monitoring (v0.2)
-
-```bash
-# Persist runs, alerts and metrics to a SQLite store by adding `store: <path>` to
-# your config; persistence-aware severity is then enabled automatically.
-
-# Watch a directory for new batches and feed them to a queue:
-biomodel-monitor watch         --config cfg.yaml --directory ./incoming --queue ./q.json
-biomodel-monitor process-queue --config cfg.yaml --queue ./q.json
-
-# Triage:
-biomodel-monitor incidents list     --store mon.db --model-id m1 --model-version 1.0.0
-biomodel-monitor incidents annotate --store mon.db --model-id m1 --model-version 1.0.0 \
-    --key <alert-key> --kind label --label fp
-
-# Learn baselines and promote them:
-biomodel-monitor baseline-update  --store mon.db --input new_batch.csv --cohort lung
-biomodel-monitor baseline-promote --store mon.db --model-id m1 --model-version 1.0.0 --cohort lung
-
-# Tune thresholds from labeled history:
-biomodel-monitor tune-thresholds  --store mon.db --model-id m1 --model-version 1.0.0
-```
-
-## Regulatory export (v0.3)
+### As a service (v0.4)
 
 ```bash
-biomodel-monitor export-bundle \
-    --store mon.db --report-dir reports_out --out-dir exports/ \
-    --model-id m1 --model-version 1.0.0 --batch-id batch_2026_04_15
-biomodel-monitor verify-bundle exports/batch_2026_04_15__20260415T120000Z
+biomodel-monitor serve --store ./biomodel.db --api-key dev-key --port 8080
+
+# OpenAPI:    http://localhost:8080/docs
+# Health:     http://localhost:8080/health
+# Prometheus: http://localhost:8080/metrics
 ```
+
+### Explain an alert (v0.5)
+
+```bash
+# When did PSI start drifting? (changepoints + robust-z anomaly score)
+biomodel-monitor explain     --store mon.db --model-id m1 --model-version 1.0.0 --metric psi
+
+# What if we exclude ScannerY?
+biomodel-monitor whatif      --input new.csv --baseline baseline.json --exclude scanner_id=ScannerY
+
+# Auto-generated model card from the persistent store
+biomodel-monitor model-card  --store mon.db --model-id m1 --model-version 1.0.0 --out card.md
+```
+
+### The full stack with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+| Service     | Port | Purpose                                       |
+| ----------- | ---- | --------------------------------------------- |
+| `server`    | 8080 | FastAPI HTTP API                              |
+| `watcher`   |  —   | Watches `./incoming/` for new batches         |
+| `dashboard` | 8501 | Streamlit triage dashboard                    |
+
+All three share the same SQLite store on a named volume; switch to Postgres
+by setting `BIOMODEL_STORE_DSN` on the `server` service.
+
+## What's new
+
+- **v0.5.0 — Intelligence & Explanation.** Root-cause attribution, changepoint detection,
+  counterfactual *what-if* drift, anomaly score, active-learning queue, auto model cards.
+- **v0.4.0 — Server & Stack.** FastAPI server, Storage Protocol with SQLite + Postgres,
+  Prometheus metrics, signed webhooks, Slack / PagerDuty / Teams, Docker Compose.
+- **v0.3.0 — Beyond pathology.** Multiclass calibration, fairness, bootstrap CIs,
+  radiology + omics rule packs, cross-model dependency graph, signed regulatory bundle.
+- **v0.2.0 — Operational.** Persistent SQLite store, persistence-aware severity, incident
+  workspace, threshold auto-tuning, rolling baselines with promotion, near-real-time
+  ingestion, pluggable notifications.
+- **v0.1.0 — Offline batch monitor.** Drift, calibration, subgroup, plausibility,
+  silent failure, alerts, HTML/MD reports, Streamlit dashboard.
+
+Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Layout
 
 ```
 biomodel_monitor/
-  schema/         pydantic models for predictions, metadata, cohort
-  ingest/         CSV / Parquet / JSONL loaders + validation
+  schema/         Pydantic models for predictions, batch metadata, cohort
+  ingest/         CSV / Parquet / JSONL loaders + contract validation
   metrics/        drift, calibration (binary + multiclass), subgroup,
                   plausibility (pathology + radiology + omics), silent_failure,
                   fairness, bootstrap CIs
   baselines/      reference-window storage + rolling learner with promotion
   alerts/         threshold engine, severity, dedup, threshold auto-tuning
-  store/          persistent SQLite metrics + incident store
+  store/          Storage Protocol; SQLite + Postgres adapters         (v0.4)
   incidents/      incident workspace (ack / resolve / comment / label)
-  scheduler/      directory watcher + filesystem queue (near-real-time)
-  notifications/  pluggable channels (file, webhook, email)
+  scheduler/      directory watcher + filesystem queue
+  notifications/  webhook (signed), Slack, PagerDuty, Teams, file       (v0.4)
+  intelligence/   attribution, changepoint, whatif, anomaly,
+                  active learning, model card                           (v0.5)
   dependency/     cross-model dependency graph + alert attribution
-  reports/        Jinja2 HTML + Markdown templates + regulatory export pack
+  reports/        Jinja2 HTML + Markdown templates + regulatory bundle
+  server/         FastAPI app, API-key auth, /metrics, structured logs  (v0.4)
   dashboard/      Streamlit dashboard
-  cli.py          `biomodel-monitor run|watch|process-queue|incidents|...`
+  cli.py          biomodel-monitor run|watch|process-queue|incidents|
+                  serve|explain|whatif|model-card|...
 examples/
   pathology_pipeline/   runnable synthetic pathology integration
-docs/             product spec, metric library, roadmap, etc.
-tests/            unit / integration / domain
+docs/              MkDocs Material site (deployed to GitHub Pages)
+tests/             unit / integration / domain   (145 tests)
 ```
 
 ## Documentation
 
-- [Product spec](docs/product_spec.md)
+The full docs are built with **MkDocs Material** and deployed to GitHub Pages on every
+push to `main` — see [`zdevfromcairo.github.io/biomodel`](https://zdevfromcairo.github.io/biomodel/).
+
+Highlights:
+
+- [Quickstart](docs/quickstart.md)
+- [Architecture](docs/architecture.md)
+- [The HTTP server (v0.4)](docs/server.md)
+- [Intelligence layer (v0.5)](docs/intelligence.md)
+- [Tutorial — your first run](docs/tutorial.md)
+- [Operating in production](docs/operations.md)
+- [Notifications](docs/notifications.md)
+- [Regulatory export](docs/regulatory.md)
 - [Metric library](docs/metric_library.md)
-- [Competition analysis](docs/competition_analysis.md)
-- [Pilot memo](docs/pilot_memo.md)
 - [Security & privacy checklist](docs/security_privacy_checklist.md)
 - [Roadmap](docs/roadmap.md)
+
+## Develop
+
+```bash
+pip install -e ".[dev,server,parquet,dashboard,docs]"
+ruff check biomodel_monitor tests
+python -m pytest -q
+mkdocs serve   # local docs preview at http://127.0.0.1:8000
+```
 
 ## License
 

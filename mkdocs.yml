@@ -1,0 +1,83 @@
+site_name: BioModel Monitor
+site_description: Post-deployment monitoring and assurance for multimodal medical AI.
+site_url: https://zdevfromcairo.github.io/biomodel/
+repo_url: https://github.com/zdevfromcairo/biomodel
+repo_name: zdevfromcairo/biomodel
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Quickstart: quickstart.md
+      - Install: install.md
+  - Architecture:
+      - Overview: architecture.md
+      - Server (v0.4): server.md
+      - Intelligence (v0.5): intelligence.md
+  - Guides:
+      - Tutorial — your first run: tutorial.md
+      - Operating in production: operations.md
+      - Notifications: notifications.md
+      - Regulatory export: regulatory.md
+  - Reference:
+      - Metric library: metric_library.md
+      - Product spec: product_spec.md
+      - Security & privacy: security_privacy_checklist.md
+      - Roadmap: roadmap.md
+  - Project:
+      - Competition analysis: competition_analysis.md
+      - Pilot memo: pilot_memo.md
+      - Changelog: changelog.md
