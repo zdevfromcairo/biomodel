@@ -17,3 +17,6 @@ htmlcov/
 out/
 reports_out/
 docs/changelog.md
+docs/contributing.md
+docs/governance.md
+site/

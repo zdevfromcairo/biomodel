@@ -1,0 +1,18 @@
+apiVersion: v2
+name: biomodel-monitor
+description: Post-deployment monitoring for multimodal medical AI.
+type: application
+version: 0.7.0
+appVersion: "0.7.0"
+home: https://zdevfromcairo.github.io/biomodel/
+sources:
+  - https://github.com/zdevfromcairo/biomodel
+maintainers:
+  - name: BioModel Monitor maintainers
+    url: https://github.com/zdevfromcairo/biomodel
+keywords:
+  - medical-ai
+  - monitoring
+  - drift
+  - calibration
+  - mlops

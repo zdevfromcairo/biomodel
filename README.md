@@ -12,8 +12,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/"><img alt="site" src="https://img.shields.io/badge/site-mkdocs--material-009485"/></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab"/>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
-  <img alt="version" src="https://img.shields.io/badge/version-0.5.0-success"/>
-  <img alt="tests" src="https://img.shields.io/badge/tests-145%20passing-brightgreen"/>
+  <img alt="version" src="https://img.shields.io/badge/version-0.7.0-success"/>
+  <img alt="tests" src="https://img.shields.io/badge/tests-204%20passing-brightgreen"/>
 </p>
 
 <p align="center">
@@ -21,6 +21,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/architecture/">Architecture</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/server/">Server</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/intelligence/">Intelligence</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/streaming/">Streaming</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/tenancy/">Tenancy</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/metric_library/">Metrics</a>
 </p>
 
@@ -53,8 +55,26 @@ model risk and answers the only question a model owner cares about:
   endpoint, Holt's-linear **drift forecasting with ETA-to-breach**, split-conformal
   prediction intervals, PCA concept-drift detector, interaction-effect attribution,
   zero-dependency **Python SDK**.
+- **Multi-tenant + plug-in + federation-ready** *(v0.7)* — RBAC tenants
+  (`viewer`/`operator`/`writer`/`admin`), entry-point plug-ins for metrics /
+  notifiers / loaders, **federated drift & calibration** from per-site sufficient
+  statistics (no raw records leave the site), tamper-evident SHA-256-chained audit
+  log, predictive-uncertainty (entropy + BALD), official **Helm chart**.
 - **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
   annotations, persistence-aware severity, per-cohort fairness summary.
+
+## Feature matrix
+
+| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 |
+| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ |
+| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ |
+| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ |
+| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ |
+| Helm chart |  |  |  |  |  |  | ✓ |
 
 ## Architecture
 
@@ -133,6 +153,9 @@ by setting `BIOMODEL_STORE_DSN` on the `server` service.
 
 ## What's new
 
+- **v0.7.0 — Multi-tenant, Plugins & Federation.** RBAC tenants, entry-point plug-in
+  system, federated drift/calibration aggregation from sufficient statistics, SHA-256
+  chained audit log, predictive uncertainty, Helm chart, governance & contributing.
 - **v0.6.0 — Streaming, Forecasting & SDK.** Server-side micro-batching `/ingest`,
   Holt's-linear drift forecasting with ETA-to-breach, split-conformal intervals,
   PCA concept-drift detector, interaction-effect attribution, zero-dependency Python SDK.
@@ -169,20 +192,28 @@ biomodel_monitor/
                   active learning, model card,                           (v0.5)
                   causal interaction-effect attribution                  (v0.6)
   metrics/        + forecast (Holt's), conformal, concept_drift          (v0.6)
+                  + uncertainty (entropy + BALD)                         (v0.7)
   streaming/      WindowBuffer micro-batching for /ingest                (v0.6)
   client/         Python SDK (stdlib-only)                               (v0.6)
+  tenancy/        TenantContext + role-based access control              (v0.7)
+  plugins/        entry-point discovery for metrics/notifiers/loaders    (v0.7)
+  federated/      pooled drift/calibration from sufficient statistics    (v0.7)
+  audit/          tamper-evident, hash-chained audit log                 (v0.7)
   dependency/     cross-model dependency graph + alert attribution
   reports/        Jinja2 HTML + Markdown templates + regulatory bundle
   server/         FastAPI app, API-key auth, /metrics, structured logs,  (v0.4)
-                  /ingest streaming, /forecast                           (v0.6)
+                  /ingest streaming, /forecast,                          (v0.6)
+                  /tenants/whoami, /audit/*, /federate/*, /plugins       (v0.7)
   dashboard/      Streamlit dashboard
   cli.py          biomodel-monitor run|watch|process-queue|incidents|
                   serve|explain|whatif|model-card|forecast|ingest|       (v0.6)
-                  client-call
+                  client-call|tenant|plugins|federate|audit-verify       (v0.7)
+deploy/
+  helm/biomodel-monitor/    official Helm chart                          (v0.7)
 examples/
   pathology_pipeline/   runnable synthetic pathology integration
 docs/              MkDocs Material site (deployed to GitHub Pages)
-tests/             unit / integration / domain   (176 tests)
+tests/             unit / integration / domain   (204 tests)
 ```
 
 ## Documentation
@@ -199,12 +230,16 @@ Highlights:
 - [Streaming ingestion (v0.6)](docs/streaming.md)
 - [Forecasting & ETA-to-breach (v0.6)](docs/forecasting.md)
 - [Python SDK (v0.6)](docs/sdk.md)
+- [Multi-tenancy & RBAC (v0.7)](docs/tenancy.md)
+- [Plugins (v0.7)](docs/plugins.md)
+- [Federated monitoring (v0.7)](docs/federation.md)
 - [Tutorial — your first run](docs/tutorial.md)
 - [Operating in production](docs/operations.md)
 - [Notifications](docs/notifications.md)
 - [Regulatory export](docs/regulatory.md)
 - [Metric library](docs/metric_library.md)
 - [Security & privacy checklist](docs/security_privacy_checklist.md)
+- [Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Develop

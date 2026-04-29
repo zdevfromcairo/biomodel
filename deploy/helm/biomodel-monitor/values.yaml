@@ -1,0 +1,99 @@
+# Default values for biomodel-monitor.
+
+replicaCount: 1
+
+image:
+  # Use the official image; override for an internal mirror.
+  repository: ghcr.io/zdevfromcairo/biomodel-monitor
+  tag: "0.7.0"
+  pullPolicy: IfNotPresent
+
+# The container ships with a configurable entrypoint; override the args
+# to e.g. point at a different store DSN or enable plugin discovery.
+args:
+  - "biomodel-monitor"
+  - "serve"
+  - "--host=0.0.0.0"
+  - "--port=8080"
+
+env:
+  BIOMODEL_LOG_LEVEL: "INFO"
+  BIOMODEL_ENABLE_PROMETHEUS: "true"
+  # Multi-tenant API keys (v0.7). Format: key:tenant:role,key:tenant:role
+  # Leave empty to fall back to the v0.4 single-API-key auth model.
+  BIOMODEL_TENANT_KEYS: ""
+  # Append-only audit log (v0.7). Mount a PVC so it survives restarts.
+  BIOMODEL_AUDIT_LOG_PATH: "/var/lib/biomodel/audit.jsonl"
+  # Enable plugin discovery (v0.7).
+  BIOMODEL_DISCOVER_PLUGINS: "false"
+  # Streaming buffer (v0.6).
+  BIOMODEL_STREAM_MAX_RECORDS: "256"
+  BIOMODEL_STREAM_MAX_AGE_S: "30"
+
+# API keys are stored in a Kubernetes Secret. The default ConfigMap-style
+# values above are non-sensitive; put real keys here under `apiKeys`.
+apiKeys:
+  # - "replace-me-with-a-real-key"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: biomodel.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  mountPath: /var/lib/biomodel
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Standard k8s features.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: "/metrics"
+  prometheus.io/port: "8080"
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10

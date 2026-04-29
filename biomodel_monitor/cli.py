@@ -593,5 +593,88 @@ def client_call_cmd(
     click.echo(json.dumps(out, indent=2, default=str))
 
 
+@main.group("tenant")
+def tenant_grp() -> None:
+    """Inspect tenant API-key registry (v0.7)."""
+
+
+@tenant_grp.command("list")
+def tenant_list_cmd() -> None:
+    """List tenants resolvable from the BIOMODEL_TENANT_KEYS env var."""
+    from biomodel_monitor.tenancy import TenantRegistry
+    reg = TenantRegistry.from_env()
+    if len(reg) == 0:
+        click.echo("No tenants configured. Set BIOMODEL_TENANT_KEYS, e.g.:")
+        click.echo("  export BIOMODEL_TENANT_KEYS='key1:hospA:writer,key2:hospB:viewer'")
+        return
+    rows = [
+        {"key_fp": k[-4:] if len(k) >= 4 else "****", "tenant_id": v.tenant_id,
+         "role": v.role}
+        for k, v in reg.entries.items()
+    ]
+    click.echo(json.dumps(rows, indent=2))
+
+
+@main.group("plugins")
+def plugins_grp() -> None:
+    """Inspect installed plugins (v0.7)."""
+
+
+@plugins_grp.command("list")
+def plugins_list_cmd() -> None:
+    """List plugins discovered from Python entry points."""
+    from biomodel_monitor.plugins import discover_plugins
+    reg = discover_plugins()
+    rows = [{"name": p.name, "group": p.group, "source": p.source,
+             "metadata": p.metadata} for p in reg.list()]
+    click.echo(json.dumps(rows, indent=2, default=str))
+
+
+@main.command("federate")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON file containing {kind, summaries: [...]}.")
+def federate_cmd(input_path: str) -> None:
+    """Aggregate per-site sufficient statistics across sites (v0.7).
+
+    Input file shape::
+
+        {"kind": "drift",  "summaries": [HistogramSummary, ...]}
+        {"kind": "calibration", "summaries": [CalibrationSummary, ...]}
+        {"kind": "moments", "summaries": [MomentSummary, ...]}
+    """
+    from biomodel_monitor.federated import (
+        CalibrationSummary,
+        HistogramSummary,
+        MomentSummary,
+        aggregate_calibration,
+        aggregate_histograms,
+        aggregate_moments,
+    )
+    body = json.loads(Path(input_path).read_text())
+    kind = body.get("kind")
+    raw = body.get("summaries", [])
+    if kind == "drift":
+        out = aggregate_histograms([HistogramSummary(**s) for s in raw])
+    elif kind == "calibration":
+        out = aggregate_calibration([CalibrationSummary(**s) for s in raw])
+    elif kind == "moments":
+        out = aggregate_moments([MomentSummary(**s) for s in raw])
+    else:
+        raise click.UsageError(
+            f"unknown kind {kind!r}; must be one of drift, calibration, moments")
+    click.echo(json.dumps(out.as_dict(), indent=2, default=str))
+
+
+@main.command("audit-verify")
+@click.option("--path", "audit_path", required=True, type=click.Path(exists=True))
+def audit_verify_cmd(audit_path: str) -> None:
+    """Re-walk an audit-log JSONL file and report integrity (v0.7)."""
+    from biomodel_monitor.audit import AuditLog
+    log = AuditLog(audit_path)
+    ok, bad = log.verify()
+    click.echo(json.dumps({"ok": ok, "first_bad_seq": bad,
+                           "n_entries": len(log.entries())}, indent=2))
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

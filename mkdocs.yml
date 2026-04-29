@@ -68,6 +68,9 @@ nav:
       - Server (v0.4): server.md
       - Intelligence (v0.5): intelligence.md
       - Streaming & Forecasting (v0.6): streaming.md
+      - Multi-tenancy & RBAC (v0.7): tenancy.md
+      - Plugins (v0.7): plugins.md
+      - Federated monitoring (v0.7): federation.md
   - Guides:
       - Tutorial — your first run: tutorial.md
       - Operating in production: operations.md
@@ -75,12 +78,14 @@ nav:
       - Regulatory export: regulatory.md
       - Python SDK: sdk.md
       - Forecasting & ETA-to-breach: forecasting.md
+  - Project:
+      - Competition analysis: competition_analysis.md
+      - Pilot memo: pilot_memo.md
+      - Contributing: contributing.md
+      - Governance: governance.md
+      - Changelog: changelog.md
   - Reference:
       - Metric library: metric_library.md
       - Product spec: product_spec.md
       - Security & privacy: security_privacy_checklist.md
       - Roadmap: roadmap.md
-  - Project:
-      - Competition analysis: competition_analysis.md
-      - Pilot memo: pilot_memo.md
-      - Changelog: changelog.md

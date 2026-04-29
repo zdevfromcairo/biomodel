@@ -29,6 +29,11 @@ class AppSettings:
     # Streaming buffer (v0.6).
     stream_max_records: int = 256
     stream_max_age_s: float = 30.0
+    # Multi-tenancy + audit + plugins (v0.7). All optional; disabled by default
+    # so v0.4–v0.6 deployments continue to work unchanged.
+    tenant_keys: dict[str, tuple[str, str]] = field(default_factory=dict)
+    audit_log_path: str | None = None
+    discover_plugins: bool = False
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "AppSettings":
@@ -123,11 +128,13 @@ def create_app(
             "`pip install -e \".[server]\"`."
         ) from e
 
+    from biomodel_monitor.audit import AuditLog
     from biomodel_monitor.incidents.workspace import IncidentWorkspace
     from biomodel_monitor.intelligence.changepoint import detect_changepoints
     from biomodel_monitor.intelligence.modelcard import build_model_card
     from biomodel_monitor.intelligence.whatif import counterfactual_drift
     from biomodel_monitor.metrics.forecast import forecast_metric
+    from biomodel_monitor.plugins import PluginRegistry, discover_plugins
     from biomodel_monitor.schema.models import PredictionRecord
     from biomodel_monitor.server.schemas import (
         AlertOut,
@@ -149,6 +156,7 @@ def create_app(
     )
     from biomodel_monitor.store.repository import Annotation, MetricsStore
     from biomodel_monitor.streaming import WindowBuffer, WindowKey
+    from biomodel_monitor.tenancy import TenantContext, TenantRegistry
 
     settings = settings or AppSettings()
     logger = _configure_logging(settings.log_level)
@@ -272,16 +280,56 @@ def create_app(
             request_hist.observe(duration_s, labels={"path": _route_label(request)})
         return response
 
+    # Multi-tenancy registry (v0.7): only active if explicitly configured.
+    tenant_registry: TenantRegistry | None = None
+    if settings.tenant_keys:
+        tenant_registry = TenantRegistry.from_mapping(settings.tenant_keys)  # type: ignore[arg-type]
+
+    # Tamper-evident audit log (v0.7): only active if path configured.
+    audit_log: AuditLog | None = None
+    if settings.audit_log_path:
+        audit_log = AuditLog(settings.audit_log_path)
+
+    # Plugin registry (v0.7).
+    plugin_registry = PluginRegistry()
+    if settings.discover_plugins:
+        try:
+            discover_plugins(plugin_registry)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("plugin discovery failed: %s", exc)
+
     def require_api_key(
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     ) -> str:
         if not settings.require_auth:
             return x_api_key or "anonymous"
+        if tenant_registry is not None:
+            tc = tenant_registry.lookup(x_api_key)
+            if tc is None:
+                raise HTTPException(401, "Invalid or missing API key.")
+            return x_api_key  # type: ignore[return-value]
         if not settings.api_keys:
             raise HTTPException(503, "Server has no API keys configured.")
         if not x_api_key or x_api_key not in settings.api_keys:
             raise HTTPException(401, "Invalid or missing API key.")
         return x_api_key
+
+    def get_tenant(
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> TenantContext:
+        """Resolve the tenant context for an authenticated request (v0.7).
+
+        Returns a synthetic *anonymous-admin* context when tenancy is not
+        configured, so endpoints that ``require()`` a permission keep
+        working in single-tenant deployments.
+        """
+        if tenant_registry is None:
+            return TenantContext(tenant_id="default", role="admin",
+                                 api_key_id=(x_api_key or "")[-4:])
+        tc = tenant_registry.lookup(x_api_key)
+        if tc is None:
+            raise HTTPException(401, "Invalid or missing API key.")
+        return tc
 
     def get_store():
         store = store_factory()
@@ -371,7 +419,12 @@ def create_app(
         key: str, ann: AnnotationIn = Body(...),
         model_id: str = Query(...), model_version: str = Query(...),
         store=Depends(get_store), actor: str = Depends(require_api_key),
+        tenant: TenantContext = Depends(get_tenant),
     ):
+        try:
+            tenant.require("annotate")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
         if ann.kind == "label" and not ann.label:
             raise HTTPException(400, "label kind requires a 'label' field")
         if ann.kind == "comment" and not (ann.note and ann.note.strip()):
@@ -382,6 +435,16 @@ def create_app(
             actor=ann.actor or actor,
         )
         saved = store.add_annotation(rec)
+        if audit_log is not None:
+            audit_log.append(
+                "annotate", {
+                    "alert_key": key, "model_id": model_id,
+                    "model_version": model_version, "kind": ann.kind,
+                    "label": ann.label,
+                },
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
         return AnnotationOut(
             id=saved.id, alert_key=saved.alert_key, model_id=saved.model_id,
             model_version=saved.model_version, kind=saved.kind, label=saved.label,
@@ -442,8 +505,19 @@ def create_app(
     def promote_baseline(
         baseline_id: int,
         store=Depends(get_store), _=Depends(require_api_key),
+        tenant: TenantContext = Depends(get_tenant),
     ):
+        try:
+            tenant.require("promote_baseline")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
         store.promote_baseline(baseline_id)
+        if audit_log is not None:
+            audit_log.append(
+                "promote_baseline", {"baseline_id": baseline_id},
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
         return Response(status_code=204)
 
     @app.post("/runs", response_model=RunPipelineResponse, status_code=202)
@@ -594,6 +668,94 @@ def create_app(
         return PlainTextResponse(
             build_model_card(store, model_id=model_id, model_version=model_version)
         )
+
+    # ---------------------------------------------------- v0.7 endpoints
+
+    @app.get("/tenants/whoami")
+    def whoami(tenant: TenantContext = Depends(get_tenant)):
+        """Return the calling tenant's identity & resolved permissions (v0.7)."""
+        return {
+            "tenant_id": tenant.tenant_id,
+            "role": tenant.role,
+            "api_key_id": tenant.api_key_id,
+            "permissions": [a for a in [
+                "list_runs", "list_alerts", "annotate", "ingest",
+                "run_pipeline", "promote_baseline", "manage_tenants",
+            ] if tenant.can(a)],
+        }
+
+    @app.get("/audit/entries")
+    def audit_entries(
+        limit: int = Query(default=100, ge=1, le=1000),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        """List the most recent audit-log entries (v0.7, admin-only)."""
+        try:
+            tenant.require("manage_tenants")
+        except Exception as exc:  # AccessDenied
+            raise HTTPException(403, str(exc)) from exc
+        if audit_log is None:
+            raise HTTPException(503, "audit log not configured")
+        entries = audit_log.entries()
+        return [e.to_dict() for e in entries[-limit:]]
+
+    @app.get("/audit/verify")
+    def audit_verify(tenant: TenantContext = Depends(get_tenant)):
+        """Re-walk the audit chain and report integrity (v0.7, admin-only)."""
+        try:
+            tenant.require("manage_tenants")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        if audit_log is None:
+            raise HTTPException(503, "audit log not configured")
+        ok, bad = audit_log.verify()
+        return {"ok": ok, "first_bad_seq": bad,
+                "n_entries": len(audit_log.entries())}
+
+    @app.get("/plugins")
+    def plugins_list(_=Depends(require_api_key)):
+        """List registered plugins (v0.7)."""
+        return [
+            {"name": p.name, "group": p.group, "source": p.source,
+             "metadata": p.metadata}
+            for p in plugin_registry.list()
+        ]
+
+    @app.post("/federate/drift")
+    def federate_drift(
+        body: dict = Body(...), _=Depends(require_api_key),
+    ):
+        """Pool per-site histograms into a federated drift result (v0.7)."""
+        from biomodel_monitor.federated import (
+            HistogramSummary,
+            aggregate_histograms,
+        )
+        try:
+            summaries = [HistogramSummary(**s) for s in body.get("summaries", [])]
+            warn = float(body.get("warn_psi", 0.10))
+            alert = float(body.get("alert_psi", 0.25))
+            result = aggregate_histograms(summaries, warn_psi=warn, alert_psi=alert)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return result.as_dict()
+
+    @app.post("/federate/calibration")
+    def federate_calibration(
+        body: dict = Body(...), _=Depends(require_api_key),
+    ):
+        """Pool per-site reliability bins into a federated ECE (v0.7)."""
+        from biomodel_monitor.federated import (
+            CalibrationSummary,
+            aggregate_calibration,
+        )
+        try:
+            summaries = [CalibrationSummary(**s) for s in body.get("summaries", [])]
+            warn = float(body.get("warn_ece", 0.05))
+            alert = float(body.get("alert_ece", 0.10))
+            result = aggregate_calibration(summaries, warn_ece=warn, alert_ece=alert)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return result.as_dict()
 
     return app
 

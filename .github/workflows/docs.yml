@@ -9,6 +9,8 @@ on:
       - ".github/workflows/docs.yml"
       - "README.md"
       - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
   workflow_dispatch:
 
 permissions:
@@ -39,8 +41,11 @@ jobs:
           pip install --upgrade pip
           pip install ".[docs]"
 
-      - name: Sync changelog into site
-        run: cp CHANGELOG.md docs/changelog.md
+      - name: Sync top-level docs into the site
+        run: |
+          cp CHANGELOG.md docs/changelog.md
+          cp CONTRIBUTING.md docs/contributing.md
+          cp GOVERNANCE.md docs/governance.md
 
       - name: Build site with MkDocs
         run: mkdocs build --strict --site-dir _site

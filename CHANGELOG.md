@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.7.0 — Multi-tenant, Plugins & Federation
+
+### Added
+- **Multi-tenancy + RBAC** (`tenancy/`) — every API key now maps to a
+  `(tenant_id, role)` pair (`viewer` / `operator` / `writer` / `admin`).
+  Endpoints that mutate state call `tenant.require(action)` and return 403
+  if the role is insufficient. Backwards-compatible: when no tenant
+  registry is configured, the server keeps the v0.4 behaviour.
+- **Plugin system** (`plugins/`) — third-party `metrics`, `notifiers` and
+  `loaders` are auto-discovered through Python entry points. Failures to
+  load a plugin are logged and skipped, never fatal. New `/plugins`
+  endpoint and `biomodel-monitor plugins list` CLI.
+- **Federated aggregation** (`federated/aggregator.py`) — pool drift,
+  calibration and continuous-metric statistics across sites *without
+  sharing raw records*. Per-site PSI / ECE / z-score is also reported so
+  outliers stand out. New `/federate/drift` and `/federate/calibration`
+  endpoints, and a `biomodel-monitor federate` CLI.
+- **Tamper-evident audit log** (`audit/log.py`) — append-only JSONL with
+  SHA-256 hash chaining; `/audit/verify` re-walks the chain and reports
+  the first broken link. Every annotation and baseline promotion is
+  recorded automatically.
+- **Predictive uncertainty** (`metrics/uncertainty.py`) — predictive
+  entropy + BALD mutual information, with a batch summary that follows
+  the project's `severity` contract.
+- **Helm chart** under `deploy/helm/biomodel-monitor/` — Chart.yaml,
+  values.yaml, deployment + service + secret templates so Kubernetes
+  operators can `helm install` the server straight from the repo.
+- **Project polish** — `CONTRIBUTING.md`, `GOVERNANCE.md`, redesigned
+  homepage with a live feature matrix.
+
+### Changed
+- `AppSettings` gains `tenant_keys`, `audit_log_path`, `discover_plugins`.
+- Mutating endpoints (`/alerts/*/annotations`, `/baselines/*/promote`)
+  now require the corresponding role *and* are recorded in the audit log
+  when one is configured.
+
 ## v0.6.0 — Streaming, Forecasting & SDK
 
 ### Added
