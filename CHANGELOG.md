@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.6.0 — Streaming, Forecasting & SDK
+
+### Added
+- **Streaming micro-batching** (`streaming/buffer.py`) — thread-safe
+  `WindowBuffer` that groups records by `(model_id, model_version)` and
+  emits a `PredictionBatch` whenever its size or age threshold is crossed.
+- **Server `/ingest` endpoint** — push records into the in-memory window
+  from any number of producers; the pipeline runs automatically on flush.
+  `flush=true` forces an end-of-day drain.
+- **Drift forecasting** (`metrics/forecast.py`) — Holt's linear method with
+  in-sample residual band; reports an explicit *ETA-to-breach* and severity
+  (`ok`/`warn`/`alert`) given a threshold and direction.
+- **Server `/forecast` endpoint** — runs the forecaster against any stored
+  metric history.
+- **Conformal prediction** (`metrics/conformal.py`) — split-conformal
+  calibration with the standard finite-sample correction, plus an
+  `empirical_coverage` monitor that flags coverage drift.
+- **Concept-drift detector** (`metrics/concept_drift.py`) — PCA
+  reconstruction-error baseline + scoring; catches multivariate shifts that
+  univariate tests miss.
+- **Interaction-effect attribution** (`intelligence/causal.py`) — ranks
+  joint `(dim1=v1, dim2=v2)` subgroups by their *lift* over the additive
+  marginal expectation.
+- **Python SDK** (`client/`) — `BioModelMonitorClient`, stdlib-only
+  (urllib), injectable transport for testing, full coverage of the v0.4–v0.6
+  API surface.
+- **CLIs**: `biomodel-monitor forecast`, `ingest`, `client-call`.
+
+### Changed
+- `AppSettings` gains `stream_max_records` and `stream_max_age_s`.
+- `create_app` accepts an optional `batch_runner` (in addition to the
+  existing `pipeline_runner`) so the streaming endpoint can drive the
+  pipeline against an in-memory `PredictionBatch`.
+
 ## v0.5.0 — Intelligence & Explanation
 
 ### Added

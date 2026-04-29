@@ -513,5 +513,85 @@ def whatif_cmd(input_path: str, baseline_path: str | None, excludes: tuple[str, 
     click.echo(json.dumps(out, indent=2, default=str))
 
 
+@main.command("forecast")
+@click.option("--store", "store_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--metric", required=True)
+@click.option("--horizon", default=10, type=int)
+@click.option("--threshold", default=None, type=float)
+@click.option("--direction", default="above",
+              type=click.Choice(["above", "below"]))
+def forecast_cmd(
+    store_path: str, model_id: str, model_version: str,
+    metric: str, horizon: int, threshold: float | None, direction: str,
+) -> None:
+    """Forecast a stored metric series and project ETA to a threshold (v0.6)."""
+    from biomodel_monitor.metrics.forecast import forecast_metric
+    from biomodel_monitor.store.repository import MetricsStore
+    store = MetricsStore(store_path)
+    try:
+        history = store.metric_history(
+            model_id=model_id, model_version=model_version, name=metric, limit=200,
+        )
+    finally:
+        store.close()
+    values = [float(p["value"]) for p in history if p.get("value") is not None]
+    if not values:
+        raise click.UsageError(f"no history for metric '{metric}'")
+    result = forecast_metric(
+        values, metric_name=metric, horizon=horizon,
+        threshold=threshold, direction=direction,  # type: ignore[arg-type]
+    )
+    click.echo(json.dumps(result.as_dict(), indent=2, default=str))
+
+
+@main.command("ingest")
+@click.option("--server", "server_url", required=True,
+              help="BioModel Monitor server URL.")
+@click.option("--api-key", "api_key", default=None)
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON or JSONL file containing prediction records.")
+@click.option("--flush", is_flag=True, help="Force-flush the server window after upload.")
+def ingest_cmd(
+    server_url: str, api_key: str | None, model_id: str, model_version: str,
+    input_path: str, flush: bool,
+) -> None:
+    """Stream records from a file into the server's micro-batching window (v0.6)."""
+    from biomodel_monitor.client import BioModelMonitorClient
+    text = Path(input_path).read_text()
+    records: list[dict]
+    if input_path.endswith(".jsonl"):
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        loaded = json.loads(text)
+        records = loaded if isinstance(loaded, list) else [loaded]
+    client = BioModelMonitorClient(server_url, api_key=api_key)
+    out = client.ingest(model_id, model_version, records, flush=flush)
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("client-call")
+@click.option("--server", "server_url", required=True)
+@click.option("--api-key", "api_key", default=None)
+@click.option("--method", default="GET",
+              type=click.Choice(["GET", "POST"], case_sensitive=False))
+@click.argument("path")
+@click.option("--json-body", "json_body", default=None, type=str,
+              help="Optional JSON request body.")
+def client_call_cmd(
+    server_url: str, api_key: str | None, method: str, path: str,
+    json_body: str | None,
+) -> None:
+    """Make a raw call against the server using the bundled SDK (v0.6)."""
+    from biomodel_monitor.client import BioModelMonitorClient
+    client = BioModelMonitorClient(server_url, api_key=api_key)
+    body = json.loads(json_body) if json_body else None
+    out = client.request(method.upper(), path, json_body=body)
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

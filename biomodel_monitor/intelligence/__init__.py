@@ -23,6 +23,11 @@ from biomodel_monitor.intelligence.attribution import (
     AlertAttribution,
     attribute_alert,
 )
+from biomodel_monitor.intelligence.causal import (
+    Interaction,
+    InteractionAttribution,
+    attribute_interactions,
+)
 from biomodel_monitor.intelligence.changepoint import (
     ChangepointResult,
     detect_changepoints,
@@ -34,8 +39,11 @@ __all__ = [
     "AlertAttribution",
     "AnomalyResult",
     "ChangepointResult",
+    "Interaction",
+    "InteractionAttribution",
     "LabelProposal",
     "attribute_alert",
+    "attribute_interactions",
     "build_model_card",
     "counterfactual_drift",
     "detect_changepoints",

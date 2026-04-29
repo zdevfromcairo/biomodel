@@ -118,6 +118,37 @@ class WhatIfRequest(BaseModel):
     )
 
 
+class IngestRequest(BaseModel):
+    """Push records into the server-side micro-batching window (v0.6)."""
+
+    model_id: str
+    model_version: str
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    flush: bool = Field(
+        default=False,
+        description="Force-flush this key's window after appending (e.g. end-of-day).",
+    )
+
+
+class IngestResponse(BaseModel):
+    accepted: int
+    buffered: int
+    flushed_batches: int = 0
+    flushed_records: int = 0
+    runs_triggered: list[str] = Field(default_factory=list)
+
+
+class ForecastResponse(BaseModel):
+    metric: str
+    severity: str
+    eta_to_breach: int | None
+    threshold: float | None
+    direction: str
+    forecast: list[dict[str, Any]]
+    method: str
+    notes: str | None = None
+
+
 __all__ = [
     "AlertOut",
     "AnnotationIn",
@@ -125,8 +156,11 @@ __all__ = [
     "BaselineSummary",
     "BatchSummary",
     "ChangepointResponse",
+    "ForecastResponse",
     "HealthResponse",
     "IncidentOut",
+    "IngestRequest",
+    "IngestResponse",
     "MetricHistoryPoint",
     "RunPipelineRequest",
     "RunPipelineResponse",

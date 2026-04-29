@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from biomodel_monitor import __version__
 from biomodel_monitor.server.metrics import PrometheusRegistry, TimerContext
@@ -26,6 +26,9 @@ class AppSettings:
     # If unset, batch-path inputs are rejected — the operator must whitelist a
     # directory before the server can read arbitrary files.
     batch_root: str | None = None
+    # Streaming buffer (v0.6).
+    stream_max_records: int = 256
+    stream_max_age_s: float = 30.0
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "AppSettings":
@@ -99,13 +102,16 @@ def create_app(
     *,
     store_factory: Callable[[], Any] | None = None,
     pipeline_runner: Callable[..., Any] | None = None,
+    batch_runner: Callable[..., Any] | None = None,
 ) -> Any:
     """Build and return a FastAPI application.
 
-    ``store_factory`` and ``pipeline_runner`` are injection points; tests pass
-    in a fake store and a stub runner so the API surface can be exercised
-    without disk or the full pipeline. By default the store is opened from
-    ``settings.store_path`` and the runner invokes the real pipeline.
+    ``store_factory``, ``pipeline_runner`` and ``batch_runner`` are injection
+    points; tests pass in a fake store and stub runners so the API surface
+    can be exercised without disk or the full pipeline. By default the store
+    is opened from ``settings.store_path``, the path-runner reads from disk
+    and runs the real pipeline, and the batch-runner runs the real pipeline
+    on an already-loaded :class:`PredictionBatch`.
     """
     try:
         from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -121,6 +127,8 @@ def create_app(
     from biomodel_monitor.intelligence.changepoint import detect_changepoints
     from biomodel_monitor.intelligence.modelcard import build_model_card
     from biomodel_monitor.intelligence.whatif import counterfactual_drift
+    from biomodel_monitor.metrics.forecast import forecast_metric
+    from biomodel_monitor.schema.models import PredictionRecord
     from biomodel_monitor.server.schemas import (
         AlertOut,
         AnnotationIn,
@@ -128,8 +136,11 @@ def create_app(
         BaselineSummary,
         BatchSummary,
         ChangepointResponse,
+        ForecastResponse,
         HealthResponse,
         IncidentOut,
+        IngestRequest,
+        IngestResponse,
         MetricHistoryPoint,
         RunPipelineRequest,
         RunPipelineResponse,
@@ -137,6 +148,7 @@ def create_app(
         WhatIfRequest,
     )
     from biomodel_monitor.store.repository import Annotation, MetricsStore
+    from biomodel_monitor.streaming import WindowBuffer, WindowKey
 
     settings = settings or AppSettings()
     logger = _configure_logging(settings.log_level)
@@ -190,6 +202,23 @@ def create_app(
             )
 
         pipeline_runner = _runner
+
+    if batch_runner is None:  # pragma: no cover — exercised only in real serve
+        from biomodel_monitor.pipeline import run_pipeline as _run_pipeline_real
+
+        def _batch_runner(batch, *, store, threshold=0.5, min_subgroup_n=30):
+            return _run_pipeline_real(
+                batch, store=store, threshold=threshold, min_subgroup_n=min_subgroup_n,
+            )
+
+        batch_runner = _batch_runner
+
+    # Server-side micro-batching window (v0.6).
+    stream_buffer = WindowBuffer(
+        max_records=settings.stream_max_records,
+        max_age_s=settings.stream_max_age_s,
+        source="http-ingest",
+    )
 
     app = FastAPI(
         title="BioModel Monitor",
@@ -453,6 +482,92 @@ def create_app(
                 )
                 for a in result.alerts
             ],
+        )
+
+    @app.post("/ingest", response_model=IngestResponse)
+    def ingest(
+        req: IngestRequest = Body(...),
+        store=Depends(get_store), _=Depends(require_api_key),
+    ):
+        """Stream records into the per-key micro-batching window (v0.6).
+
+        Records are appended to the in-memory window for
+        ``(model_id, model_version)``. Whenever the window's size or age
+        threshold is crossed the resulting :class:`PredictionBatch` is run
+        through the pipeline immediately. Set ``flush=True`` to force a
+        flush after this push (e.g. end-of-day).
+        """
+        if req.model_id != "" and req.model_version == "":
+            raise HTTPException(400, "model_version is required")
+        accepted = 0
+        flushed: list[Any] = []
+        for raw in req.records:
+            try:
+                rec = PredictionRecord.model_validate(raw)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(422, f"invalid record: {exc}") from exc
+            batch = stream_buffer.add(req.model_id, req.model_version, rec)
+            accepted += 1
+            if batch is not None:
+                flushed.append(batch)
+        if req.flush:
+            flushed.extend(stream_buffer.flush_all())
+        # Also drain anything that aged out while we were appending.
+        flushed.extend(stream_buffer.flush_due())
+        run_ids: list[str] = []
+        flushed_records = 0
+        for b in flushed:
+            flushed_records += len(b.records)
+            try:
+                result = batch_runner(b, store=store)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "batch_runner failed",
+                    extra={"batch_id": b.metadata.batch_id, "error": str(exc)},
+                )
+                continue
+            if alert_ctr is not None:
+                for a in getattr(result, "alerts", []) or []:
+                    alert_ctr.inc(labels={"severity": a.severity, "category": a.category})
+            run_id = getattr(result, "run_id", None)
+            if run_id:
+                run_ids.append(run_id)
+        return IngestResponse(
+            accepted=accepted,
+            buffered=stream_buffer.size(WindowKey(req.model_id, req.model_version)),
+            flushed_batches=len(flushed),
+            flushed_records=flushed_records,
+            runs_triggered=run_ids,
+        )
+
+    @app.get("/forecast", response_model=ForecastResponse)
+    def forecast(
+        metric: str = Query(...),
+        model_id: str = Query(...),
+        model_version: str = Query(...),
+        horizon: int = Query(default=10, ge=1, le=200),
+        threshold: float | None = Query(default=None),
+        direction: Literal["above", "below"] = Query(default="above"),
+        store=Depends(get_store), _=Depends(require_api_key),
+    ):
+        """Forecast a metric series and project ETA to a threshold (v0.6)."""
+        history = store.metric_history(
+            model_id=model_id, model_version=model_version, name=metric, limit=200,
+        )
+        values = [float(p["value"]) for p in history if p.get("value") is not None]
+        if not values:
+            raise HTTPException(404, f"no history for metric '{metric}'")
+        result = forecast_metric(
+            values, metric_name=metric, horizon=horizon,
+            threshold=threshold, direction=direction,
+        )
+        return ForecastResponse(
+            metric=metric, severity=result.severity,
+            eta_to_breach=result.eta_to_breach, threshold=result.threshold,
+            direction=result.direction,
+            forecast=[{"step": p.step, "value": p.value,
+                       "lower": p.lower, "upper": p.upper} for p in result.forecast],
+            method=result.method, notes=result.notes,
         )
 
     @app.post("/whatif")

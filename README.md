@@ -49,6 +49,10 @@ model risk and answers the only question a model owner cares about:
 - **Explains itself** *(v0.5)* — per-alert root-cause attribution, changepoint detection,
   counterfactual *what-if* drift, robust-z anomaly score, active-learning incident queue,
   auto-generated model cards.
+- **Streams + forecasts + has an SDK** *(v0.6)* — server-side micro-batching `/ingest`
+  endpoint, Holt's-linear **drift forecasting with ETA-to-breach**, split-conformal
+  prediction intervals, PCA concept-drift detector, interaction-effect attribution,
+  zero-dependency **Python SDK**.
 - **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
   annotations, persistence-aware severity, per-cohort fairness summary.
 
@@ -129,6 +133,9 @@ by setting `BIOMODEL_STORE_DSN` on the `server` service.
 
 ## What's new
 
+- **v0.6.0 — Streaming, Forecasting & SDK.** Server-side micro-batching `/ingest`,
+  Holt's-linear drift forecasting with ETA-to-breach, split-conformal intervals,
+  PCA concept-drift detector, interaction-effect attribution, zero-dependency Python SDK.
 - **v0.5.0 — Intelligence & Explanation.** Root-cause attribution, changepoint detection,
   counterfactual *what-if* drift, anomaly score, active-learning queue, auto model cards.
 - **v0.4.0 — Server & Stack.** FastAPI server, Storage Protocol with SQLite + Postgres,
@@ -159,17 +166,23 @@ biomodel_monitor/
   scheduler/      directory watcher + filesystem queue
   notifications/  webhook (signed), Slack, PagerDuty, Teams, file       (v0.4)
   intelligence/   attribution, changepoint, whatif, anomaly,
-                  active learning, model card                           (v0.5)
+                  active learning, model card,                           (v0.5)
+                  causal interaction-effect attribution                  (v0.6)
+  metrics/        + forecast (Holt's), conformal, concept_drift          (v0.6)
+  streaming/      WindowBuffer micro-batching for /ingest                (v0.6)
+  client/         Python SDK (stdlib-only)                               (v0.6)
   dependency/     cross-model dependency graph + alert attribution
   reports/        Jinja2 HTML + Markdown templates + regulatory bundle
-  server/         FastAPI app, API-key auth, /metrics, structured logs  (v0.4)
+  server/         FastAPI app, API-key auth, /metrics, structured logs,  (v0.4)
+                  /ingest streaming, /forecast                           (v0.6)
   dashboard/      Streamlit dashboard
   cli.py          biomodel-monitor run|watch|process-queue|incidents|
-                  serve|explain|whatif|model-card|...
+                  serve|explain|whatif|model-card|forecast|ingest|       (v0.6)
+                  client-call
 examples/
   pathology_pipeline/   runnable synthetic pathology integration
 docs/              MkDocs Material site (deployed to GitHub Pages)
-tests/             unit / integration / domain   (145 tests)
+tests/             unit / integration / domain   (176 tests)
 ```
 
 ## Documentation
@@ -183,6 +196,9 @@ Highlights:
 - [Architecture](docs/architecture.md)
 - [The HTTP server (v0.4)](docs/server.md)
 - [Intelligence layer (v0.5)](docs/intelligence.md)
+- [Streaming ingestion (v0.6)](docs/streaming.md)
+- [Forecasting & ETA-to-breach (v0.6)](docs/forecasting.md)
+- [Python SDK (v0.6)](docs/sdk.md)
 - [Tutorial — your first run](docs/tutorial.md)
 - [Operating in production](docs/operations.md)
 - [Notifications](docs/notifications.md)

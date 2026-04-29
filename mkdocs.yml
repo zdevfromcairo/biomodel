@@ -67,11 +67,14 @@ nav:
       - Overview: architecture.md
       - Server (v0.4): server.md
       - Intelligence (v0.5): intelligence.md
+      - Streaming & Forecasting (v0.6): streaming.md
   - Guides:
       - Tutorial — your first run: tutorial.md
       - Operating in production: operations.md
       - Notifications: notifications.md
       - Regulatory export: regulatory.md
+      - Python SDK: sdk.md
+      - Forecasting & ETA-to-breach: forecasting.md
   - Reference:
       - Metric library: metric_library.md
       - Product spec: product_spec.md
