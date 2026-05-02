@@ -89,7 +89,7 @@ class BioModelMonitorClient:
             qp = {k: v for k, v in params.items() if v is not None}
             if qp:
                 url = url + ("&" if "?" in url else "?") + urlencode(qp, doseq=True)
-        headers = {"Accept": "application/json", "User-Agent": "biomodel-monitor-sdk/0.6"}
+        headers = {"Accept": "application/json", "User-Agent": "biomodel-monitor-sdk/0.8"}
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         body: bytes | None = None
@@ -195,3 +195,73 @@ class BioModelMonitorClient:
             "metric": metric, "horizon": horizon, "threshold": threshold,
             "direction": direction,
         })
+
+    # ----------------------------------------------------------- v0.8 ---
+    def mmd(
+        self,
+        reference: list,
+        current: list,
+        *,
+        bandwidth: float | None = None,
+        n_permutations: int = 200,
+        warn: float = 0.05,
+        alert: float = 0.10,
+    ) -> dict:
+        """Embedding-drift via squared MMD with an RBF kernel (v0.8)."""
+        return self.request("POST", "/mmd", json_body={
+            "reference": list(reference), "current": list(current),
+            "bandwidth": bandwidth, "n_permutations": int(n_permutations),
+            "warn": warn, "alert": alert,
+        })
+
+    def cusum(
+        self,
+        *,
+        model_id: str,
+        model_version: str,
+        metric: str,
+        target: float | None = None,
+        sigma: float | None = None,
+        threshold: float = 4.0,
+        slack_k: float = 0.5,
+        limit: int = 200,
+    ) -> dict:
+        """Run an offline CUSUM over a stored metric history (v0.8)."""
+        return self.request("POST", "/cusum", json_body={
+            "model_id": model_id, "model_version": model_version,
+            "metric": metric, "target": target, "sigma": sigma,
+            "threshold": threshold, "slack_k": slack_k, "limit": limit,
+        })
+
+    def events(self, *, limit: int = 100, type: str | None = None) -> list[dict]:
+        """Replay recent events from the server's in-process bus (v0.8)."""
+        return self.request("GET", "/events", params={"limit": limit, "type": type})
+
+    def stream_events(
+        self,
+        *,
+        timeout: float | None = None,
+    ):  # pragma: no cover — exercised against a live server
+        """Yield live events from ``/ws/events`` as Python dicts (v0.8).
+
+        Requires the optional ``websockets`` package. Yields one dict per
+        event; the caller decides when to stop iterating.
+        """
+        try:
+            from websockets.sync.client import connect  # type: ignore[import-untyped]
+        except ImportError as e:
+            raise RuntimeError(
+                "stream_events requires the 'websockets' package: "
+                "`pip install websockets`."
+            ) from e
+        url = self.base_url.replace("http://", "ws://", 1).replace(
+            "https://", "wss://", 1,
+        ) + "ws/events"
+        if self.api_key:
+            url += f"?api_key={self.api_key}"
+        with connect(url, open_timeout=timeout, close_timeout=timeout) as ws:
+            while True:
+                msg = ws.recv()
+                if isinstance(msg, (bytes, bytearray)):
+                    msg = msg.decode("utf-8")
+                yield json.loads(msg)

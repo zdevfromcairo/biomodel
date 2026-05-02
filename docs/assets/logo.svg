@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BioModel Monitor logo">
+  <title>BioModel Monitor</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f9d8e"/>
+      <stop offset="100%" stop-color="#1976d2"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded square frame -->
+  <rect x="2" y="2" width="60" height="60" rx="12" ry="12" fill="url(#g)"/>
+  <!-- ECG / monitor pulse -->
+  <polyline
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    points="8,38 18,38 22,30 28,46 34,22 40,38 56,38"/>
+  <!-- helix-ish dot to nod at 'bio' -->
+  <circle cx="48" cy="18" r="3" fill="#ffd54f"/>
+</svg>

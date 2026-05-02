@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.8.0 — Reactive core
+
+### Added
+- **Concurrent batch pipeline** (`pipeline_async.py`) — `run_pipeline_async()`
+  schedules drift / calibration / subgroup / plausibility on a thread pool and
+  produces byte-identical results to the synchronous pipeline (same alert keys,
+  metric rows, run id). Returns an `AsyncPipelineStats` block with per-phase
+  wall time. CLI: `biomodel-monitor pipeline-async`.
+- **Live event bus + WebSocket stream** (`server/events.py`,
+  `/ws/events`, `/events`) — in-process pub/sub that broadcasts
+  `alert.emitted`, `run.completed`, `incident.annotated`,
+  `baseline.promoted`, `ingest.flushed` and `system.info` events. Bounded
+  queues and history; slow consumers drop the *oldest* events so the
+  publisher is never blocked. SDK helpers `client.events()` and
+  `client.stream_events()`.
+- **Embedding-drift via Maximum Mean Discrepancy** (`metrics/embedding_drift.py`)
+  — RBF kernel with median-heuristic bandwidth, unbiased MMD² estimator,
+  permutation p-value with Phipson–Smyth correction. Endpoint `POST /mmd` and
+  CLI `biomodel-monitor mmd`.
+- **Online CUSUM change detector** (`metrics/cusum.py`) — Page's two-sided
+  CUSUM (`CUSUMMonitor`) and a one-shot `cusum_offline` helper that estimates
+  target/sigma from a reference window when omitted. Endpoint `POST /cusum`
+  and CLI `biomodel-monitor cusum`.
+- **Per-record local attribution** (`intelligence/local_attribution.py`) —
+  closed-form leave-one-out influence per record for `score_mean` and
+  `positive_rate`, plus a `aggregate_top_dimensions` roll-up. Severity
+  reflects how concentrated the contribution mass is.
+- **Drift influence graph** (`intelligence/drift_graph.py`) — directed
+  graph of `(dimension, value) → target dimension` JS-divergence weights,
+  exportable as Graphviz `dot` source. CLI: `biomodel-monitor drift-graph`.
+- **OpenAPI as YAML** at `GET /openapi.yaml` for downstream codegen.
+- **MkDocs custom hero + SVG logo** under `docs/assets/` and a new
+  *Reactive core (v0.8)* page (`docs/reactive.md`).
+
+### Changed
+- Server now publishes events from `trigger_run`, `ingest`, `annotate` and
+  `promote_baseline` to the new event bus.
+- Python SDK bumps `User-Agent` to `biomodel-monitor-sdk/0.8` and gains
+  `mmd()`, `cusum()`, `events()` and `stream_events()` methods.
+
+### Tested
+- 235 tests passing (was 204), including 18 new metric/intelligence tests
+  and 13 new endpoint/pipeline-async tests.
+
 ## v0.7.0 — Multi-tenant, Plugins & Federation
 
 ### Added

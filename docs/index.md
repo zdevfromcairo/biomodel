@@ -1,5 +1,9 @@
 # BioModel Monitor
 
+<p align="center" markdown="1">
+  <img src="assets/logo.svg" alt="BioModel Monitor" width="96" height="96"/>
+</p>
+
 > **Post-deployment monitoring and assurance for multimodal medical AI.**
 
 Generic ML monitoring tracks uptime and aggregate accuracy. **Medical AI fails differently** —
@@ -32,6 +36,17 @@ hand to a regulator.
 
     Signed regulatory export bundles, persistent annotations, alert dedup with
     persistence-aware severity.
+
+-   :material-flash: __Reactive core__ &nbsp;<small>v0.8</small>
+
+    Concurrent `pipeline-async`, WebSocket `/ws/events` live stream,
+    embedding-drift via **MMD**, online **CUSUM**, per-record local attribution,
+    drift influence graph between dimensions.
+
+-   :material-account-group: __Multi-tenant + federated__ &nbsp;<small>v0.7</small>
+
+    RBAC tenants, plug-in entry points, federated drift/calibration from
+    sufficient statistics, tamper-evident SHA-256 audit log, Helm chart.
 
 </div>
 

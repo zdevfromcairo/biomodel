@@ -149,18 +149,81 @@ class ForecastResponse(BaseModel):
     notes: str | None = None
 
 
+# v0.8 additions ------------------------------------------------------------
+
+class MMDRequest(BaseModel):
+    """Embedding-drift request (v0.8). Reference and current can be 1D or 2D."""
+
+    reference: list[Any] = Field(default_factory=list)
+    current: list[Any] = Field(default_factory=list)
+    bandwidth: float | None = None
+    n_permutations: int = 200
+    warn: float = 0.05
+    alert: float = 0.10
+
+
+class MMDResponse(BaseModel):
+    name: str
+    value: float
+    severity: str
+    p_value: float | None = None
+    bandwidth: float | None = None
+    n_reference: int = 0
+    n_current: int = 0
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class CUSUMRequest(BaseModel):
+    metric: str
+    model_id: str
+    model_version: str
+    target: float | None = None
+    sigma: float | None = None
+    threshold: float = 4.0
+    slack_k: float = 0.5
+    limit: int = 200
+
+
+class CUSUMResponse(BaseModel):
+    name: str
+    metric: str
+    severity: str
+    direction: str | None = None
+    detected_at: int | None = None
+    value: float
+    target: float
+    sigma: float
+    threshold: float
+    slack_k: float
+    n: int
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventOut(BaseModel):
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    ts_ms: int
+    event_id: str
+    tenant_id: str | None = None
+
+
 __all__ = [
     "AlertOut",
     "AnnotationIn",
     "AnnotationOut",
     "BaselineSummary",
     "BatchSummary",
+    "CUSUMRequest",
+    "CUSUMResponse",
     "ChangepointResponse",
+    "EventOut",
     "ForecastResponse",
     "HealthResponse",
     "IncidentOut",
     "IngestRequest",
     "IngestResponse",
+    "MMDRequest",
+    "MMDResponse",
     "MetricHistoryPoint",
     "RunPipelineRequest",
     "RunPipelineResponse",

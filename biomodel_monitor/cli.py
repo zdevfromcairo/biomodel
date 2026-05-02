@@ -676,5 +676,109 @@ def audit_verify_cmd(audit_path: str) -> None:
                            "n_entries": len(log.entries())}, indent=2))
 
 
+# --------------------------------------------------------------------------- #
+# v0.8 commands
+# --------------------------------------------------------------------------- #
+
+@main.command("pipeline-async")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True))
+@click.option("--batch", "batch_path", required=True, type=click.Path(exists=True))
+@click.option("--out", "out_dir", required=True, type=click.Path())
+@click.option("--workers", default=4, show_default=True, type=int)
+@click.option("--threshold", default=0.5, show_default=True, type=float)
+@click.option("--min-subgroup-n", default=30, show_default=True, type=int)
+def pipeline_async_cmd(
+    config_path: str, batch_path: str, out_dir: str,
+    workers: int, threshold: float, min_subgroup_n: int,
+) -> None:
+    """Run the v0.8 concurrent pipeline and write reports."""
+    from biomodel_monitor.baselines.store import Baseline, BaselineStore  # noqa: F401
+    from biomodel_monitor.pipeline import write_outputs
+    from biomodel_monitor.pipeline_async import run_pipeline_async
+
+    cfg = _load_config(config_path)
+    batch = load_batch(batch_path)
+    baseline: Baseline | None = None
+    if cfg.get("baseline_path"):
+        bs = BaselineStore(cfg["baseline_path"])
+        cohort = cfg.get("cohort")
+        baseline = bs.get_active(model_id=batch.metadata.model_id,
+                                 model_version=batch.metadata.model_version,
+                                 cohort=cohort)
+    store = _open_store(cfg)
+    result, stats = run_pipeline_async(
+        batch, baseline=baseline, store=store,
+        threshold=threshold, min_subgroup_n=min_subgroup_n, workers=workers,
+    )
+    paths = write_outputs(batch, result, out_dir=out_dir)
+    click.echo(json.dumps({
+        "n_alerts": len(result.alerts),
+        "stats": stats.as_dict(),
+        "outputs": {k: str(v) for k, v in paths.items()},
+    }, indent=2))
+
+
+@main.command("mmd")
+@click.option("--reference", "reference_path", required=True, type=click.Path(exists=True),
+              help="JSON file: list of vectors (or scalars).")
+@click.option("--current", "current_path", required=True, type=click.Path(exists=True))
+@click.option("--n-permutations", default=200, show_default=True, type=int)
+@click.option("--bandwidth", default=None, type=float)
+def mmd_cmd(reference_path: str, current_path: str,
+            n_permutations: int, bandwidth: float | None) -> None:
+    """Embedding-drift MMD between two saved JSON arrays (v0.8)."""
+    from biomodel_monitor.metrics.embedding_drift import mmd_rbf
+    ref = json.loads(Path(reference_path).read_text())
+    cur = json.loads(Path(current_path).read_text())
+    res = mmd_rbf(ref, cur, n_permutations=n_permutations, bandwidth=bandwidth)
+    click.echo(json.dumps(res.as_dict(), indent=2))
+
+
+@main.command("cusum")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON file: list of floats (the metric series).")
+@click.option("--target", default=None, type=float)
+@click.option("--sigma", default=None, type=float)
+@click.option("--threshold", default=4.0, show_default=True, type=float)
+@click.option("--slack-k", default=0.5, show_default=True, type=float)
+def cusum_cmd(input_path: str, target: float | None, sigma: float | None,
+              threshold: float, slack_k: float) -> None:
+    """Run an offline CUSUM over a saved metric series (v0.8)."""
+    from biomodel_monitor.metrics.cusum import cusum_offline
+    series = json.loads(Path(input_path).read_text())
+    res = cusum_offline(series, target=target, sigma=sigma,
+                        threshold=threshold, slack_k=slack_k)
+    click.echo(json.dumps(res.as_dict(), indent=2))
+
+
+@main.command("drift-graph")
+@click.option("--batch", "batch_path", required=True, type=click.Path(exists=True))
+@click.option("--out", "out_path", default=None, type=click.Path(),
+              help="If set, write a Graphviz .dot file to this path.")
+@click.option("--min-n", default=20, show_default=True, type=int)
+def drift_graph_cmd(batch_path: str, out_path: str | None, min_n: int) -> None:
+    """Build the dimension-influence drift graph for a batch (v0.8)."""
+    from biomodel_monitor.intelligence.drift_graph import build_drift_graph
+    batch = load_batch(batch_path)
+    g = build_drift_graph(batch.records, min_n=min_n)
+    if out_path:
+        Path(out_path).write_text(g.to_dot())
+    click.echo(json.dumps(g.as_dict(), indent=2, default=str))
+
+
+@main.command("events-tail")
+@click.option("--server", "base_url", default="http://127.0.0.1:8080",
+              show_default=True)
+@click.option("--api-key", "api_key", required=True, envvar="BIOMODEL_API_KEY")
+@click.option("--limit", default=20, show_default=True, type=int)
+def events_tail_cmd(base_url: str, api_key: str, limit: int) -> None:
+    """Print the last N events from a running BioModel Monitor server (v0.8)."""
+    from biomodel_monitor.client import BioModelMonitorClient
+    client = BioModelMonitorClient(base_url, api_key=api_key)
+    rows = client.events(limit=limit)
+    for r in rows:
+        click.echo(json.dumps(r, default=str))
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

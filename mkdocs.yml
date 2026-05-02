@@ -9,6 +9,8 @@ docs_dir: docs
 
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -71,6 +73,7 @@ nav:
       - Multi-tenancy & RBAC (v0.7): tenancy.md
       - Plugins (v0.7): plugins.md
       - Federated monitoring (v0.7): federation.md
+      - Reactive core (v0.8): reactive.md
   - Guides:
       - Tutorial — your first run: tutorial.md
       - Operating in production: operations.md

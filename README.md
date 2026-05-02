@@ -12,8 +12,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/"><img alt="site" src="https://img.shields.io/badge/site-mkdocs--material-009485"/></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab"/>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
-  <img alt="version" src="https://img.shields.io/badge/version-0.7.0-success"/>
-  <img alt="tests" src="https://img.shields.io/badge/tests-204%20passing-brightgreen"/>
+  <img alt="version" src="https://img.shields.io/badge/version-0.8.0-success"/>
+  <img alt="tests" src="https://img.shields.io/badge/tests-235%20passing-brightgreen"/>
 </p>
 
 <p align="center">
@@ -22,6 +22,7 @@
   <a href="https://zdevfromcairo.github.io/biomodel/server/">Server</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/intelligence/">Intelligence</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/streaming/">Streaming</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/reactive/">Reactive&nbsp;(v0.8)</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/tenancy/">Tenancy</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/metric_library/">Metrics</a>
 </p>
@@ -60,21 +61,27 @@ model risk and answers the only question a model owner cares about:
   notifiers / loaders, **federated drift & calibration** from per-site sufficient
   statistics (no raw records leave the site), tamper-evident SHA-256-chained audit
   log, predictive-uncertainty (entropy + BALD), official **Helm chart**.
+- **Reactive core** *(v0.8)* — concurrent **`pipeline-async`** (4× workers,
+  byte-identical results), **WebSocket `/ws/events`** live event bus with replay,
+  **embedding-drift via MMD** with permutation p-value, **online CUSUM** change
+  detector, per-record **local attribution** (leave-one-out), **drift influence
+  graph** between dimensions, OpenAPI-as-YAML at `/openapi.yaml`.
 - **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
   annotations, persistence-aware severity, per-cohort fairness summary.
 
 ## Feature matrix
 
-| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 |
-| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
-| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ |
-| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ |
-| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ |
-| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ |
-| Helm chart |  |  |  |  |  |  | ✓ |
+| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 | v0.8 |
+| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
+| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ | ✓ |
+| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ | ✓ |
+| Helm chart |  |  |  |  |  |  | ✓ | ✓ |
+| Concurrent pipeline + WebSocket events + MMD + CUSUM |  |  |  |  |  |  |  | ✓ |
 
 ## Architecture
 
@@ -153,6 +160,11 @@ by setting `BIOMODEL_STORE_DSN` on the `server` service.
 
 ## What's new
 
+- **v0.8.0 — Reactive core.** Concurrent `pipeline-async` (4× workers, byte-identical
+  results), WebSocket `/ws/events` live event bus with replay, embedding-drift via
+  **MMD** with permutation p-value, online **CUSUM** change detector, per-record
+  **local attribution**, dimension **drift influence graph**, OpenAPI-as-YAML at
+  `/openapi.yaml`, MkDocs custom hero + SVG logo.
 - **v0.7.0 — Multi-tenant, Plugins & Federation.** RBAC tenants, entry-point plug-in
   system, federated drift/calibration aggregation from sufficient statistics, SHA-256
   chained audit log, predictive uncertainty, Helm chart, governance & contributing.
@@ -208,12 +220,13 @@ biomodel_monitor/
   cli.py          biomodel-monitor run|watch|process-queue|incidents|
                   serve|explain|whatif|model-card|forecast|ingest|       (v0.6)
                   client-call|tenant|plugins|federate|audit-verify       (v0.7)
+                  pipeline-async|mmd|cusum|drift-graph|events-tail       (v0.8)
 deploy/
   helm/biomodel-monitor/    official Helm chart                          (v0.7)
 examples/
   pathology_pipeline/   runnable synthetic pathology integration
 docs/              MkDocs Material site (deployed to GitHub Pages)
-tests/             unit / integration / domain   (204 tests)
+tests/             unit / integration / domain   (235 tests)
 ```
 
 ## Documentation
@@ -230,6 +243,7 @@ Highlights:
 - [Streaming ingestion (v0.6)](docs/streaming.md)
 - [Forecasting & ETA-to-breach (v0.6)](docs/forecasting.md)
 - [Python SDK (v0.6)](docs/sdk.md)
+- [Reactive core (v0.8)](docs/reactive.md)
 - [Multi-tenancy & RBAC (v0.7)](docs/tenancy.md)
 - [Plugins (v0.7)](docs/plugins.md)
 - [Federated monitoring (v0.7)](docs/federation.md)

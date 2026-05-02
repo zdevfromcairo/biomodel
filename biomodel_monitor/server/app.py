@@ -119,7 +119,18 @@ def create_app(
     on an already-loaded :class:`PredictionBatch`.
     """
     try:
-        from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+        from fastapi import (
+            Body,
+            Depends,
+            FastAPI,
+            Header,
+            HTTPException,
+            Query,
+            Request,
+            Response,
+            WebSocket,
+            WebSocketDisconnect,
+        )
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import JSONResponse, PlainTextResponse
     except ImportError as e:  # pragma: no cover
@@ -133,9 +144,12 @@ def create_app(
     from biomodel_monitor.intelligence.changepoint import detect_changepoints
     from biomodel_monitor.intelligence.modelcard import build_model_card
     from biomodel_monitor.intelligence.whatif import counterfactual_drift
+    from biomodel_monitor.metrics.cusum import cusum_offline
+    from biomodel_monitor.metrics.embedding_drift import mmd_rbf
     from biomodel_monitor.metrics.forecast import forecast_metric
     from biomodel_monitor.plugins import PluginRegistry, discover_plugins
     from biomodel_monitor.schema.models import PredictionRecord
+    from biomodel_monitor.server.events import Event, EventBus
     from biomodel_monitor.server.schemas import (
         AlertOut,
         AnnotationIn,
@@ -143,12 +157,17 @@ def create_app(
         BaselineSummary,
         BatchSummary,
         ChangepointResponse,
+        CUSUMRequest,
+        CUSUMResponse,
+        EventOut,
         ForecastResponse,
         HealthResponse,
         IncidentOut,
         IngestRequest,
         IngestResponse,
         MetricHistoryPoint,
+        MMDRequest,
+        MMDResponse,
         RunPipelineRequest,
         RunPipelineResponse,
         RunSummary,
@@ -227,6 +246,9 @@ def create_app(
         max_age_s=settings.stream_max_age_s,
         source="http-ingest",
     )
+
+    # Live event bus (v0.8): in-process pub/sub for /ws/events subscribers.
+    event_bus = EventBus()
 
     app = FastAPI(
         title="BioModel Monitor",
@@ -445,6 +467,15 @@ def create_app(
                 actor_tenant=tenant.tenant_id, actor_role=tenant.role,
                 actor_key_fp=tenant.api_key_id,
             )
+        event_bus.publish(Event(
+            type="incident.annotated",
+            tenant_id=tenant.tenant_id,
+            payload={
+                "alert_key": key, "model_id": model_id,
+                "model_version": model_version, "kind": ann.kind,
+                "label": ann.label, "actor": ann.actor or actor,
+            },
+        ))
         return AnnotationOut(
             id=saved.id, alert_key=saved.alert_key, model_id=saved.model_id,
             model_version=saved.model_version, kind=saved.kind, label=saved.label,
@@ -518,6 +549,11 @@ def create_app(
                 actor_tenant=tenant.tenant_id, actor_role=tenant.role,
                 actor_key_fp=tenant.api_key_id,
             )
+        event_bus.publish(Event(
+            type="baseline.promoted",
+            tenant_id=tenant.tenant_id,
+            payload={"baseline_id": baseline_id},
+        ))
         return Response(status_code=204)
 
     @app.post("/runs", response_model=RunPipelineResponse, status_code=202)
@@ -546,6 +582,19 @@ def create_app(
         if alert_ctr is not None:
             for a in result.alerts:
                 alert_ctr.inc(labels={"severity": a.severity, "category": a.category})
+        for a in result.alerts:
+            event_bus.publish(Event(
+                type="alert.emitted",
+                payload={
+                    "key": a.key, "title": a.title, "severity": a.severity,
+                    "score": a.score, "category": a.category,
+                    "run_id": result.run_id,
+                },
+            ))
+        event_bus.publish(Event(
+            type="run.completed",
+            payload={"run_id": result.run_id, "n_alerts": len(result.alerts)},
+        ))
         return RunPipelineResponse(
             run_id=result.run_id, n_alerts=len(result.alerts),
             alerts=[
@@ -606,6 +655,25 @@ def create_app(
             run_id = getattr(result, "run_id", None)
             if run_id:
                 run_ids.append(run_id)
+            for a in getattr(result, "alerts", []) or []:
+                event_bus.publish(Event(
+                    type="alert.emitted",
+                    payload={
+                        "key": a.key, "title": a.title,
+                        "severity": a.severity, "score": a.score,
+                        "category": a.category, "run_id": run_id,
+                    },
+                ))
+        if flushed:
+            event_bus.publish(Event(
+                type="ingest.flushed",
+                payload={
+                    "model_id": req.model_id, "model_version": req.model_version,
+                    "flushed_batches": len(flushed),
+                    "flushed_records": flushed_records,
+                    "runs_triggered": run_ids,
+                },
+            ))
         return IngestResponse(
             accepted=accepted,
             buffered=stream_buffer.size(WindowKey(req.model_id, req.model_version)),
@@ -756,6 +824,103 @@ def create_app(
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
         return result.as_dict()
+
+    # ---------------------------------------------------- v0.8 endpoints
+
+    @app.post("/mmd", response_model=MMDResponse)
+    def mmd(req: MMDRequest = Body(...), _=Depends(require_api_key)):
+        """Embedding drift via squared MMD with an RBF kernel (v0.8)."""
+        try:
+            res = mmd_rbf(
+                req.reference, req.current,
+                bandwidth=req.bandwidth,
+                n_permutations=req.n_permutations,
+                warn=req.warn, alert=req.alert,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        d = res.as_dict()
+        return MMDResponse(**d)
+
+    @app.post("/cusum", response_model=CUSUMResponse)
+    def cusum(req: CUSUMRequest = Body(...),
+              store=Depends(get_store), _=Depends(require_api_key)):
+        """Run an offline CUSUM over a stored metric history (v0.8)."""
+        history = store.metric_history(
+            model_id=req.model_id, model_version=req.model_version,
+            name=req.metric, limit=req.limit,
+        )
+        values = [float(p["value"]) for p in history if p.get("value") is not None]
+        if not values:
+            raise HTTPException(404, f"no history for metric '{req.metric}'")
+        res = cusum_offline(
+            values, target=req.target, sigma=req.sigma,
+            threshold=req.threshold, slack_k=req.slack_k, name="cusum",
+        )
+        return CUSUMResponse(metric=req.metric, **res.as_dict())
+
+    @app.get("/events", response_model=list[EventOut])
+    def events_history(
+        limit: int = Query(default=100, ge=1, le=1000),
+        type: str | None = Query(default=None),
+        _=Depends(require_api_key),
+    ):
+        """Recent events from the in-process bus (v0.8).
+
+        Useful for clients that connect *after* events fire and want a small
+        replay before subscribing to /ws/events.
+        """
+        types = [type] if type else None
+        items = event_bus.history(types=types, limit=limit)
+        return [EventOut(**e.to_json()) for e in items]
+
+    @app.websocket("/ws/events")
+    async def ws_events(websocket: WebSocket):  # noqa: ANN001 — fastapi typing
+        """Live event stream (v0.8). Auth via ``?api_key=`` query string.
+
+        Each frame is a JSON-encoded :class:`Event`. The server sends a
+        ``system.info`` welcome then pushes each new event as it's published.
+        """
+        api_key = websocket.query_params.get("api_key") or websocket.headers.get(
+            "x-api-key"
+        )
+        if settings.require_auth:
+            authorised = False
+            if tenant_registry is not None:
+                authorised = tenant_registry.lookup(api_key) is not None
+            else:
+                authorised = bool(api_key) and api_key in settings.api_keys
+            if not authorised:
+                await websocket.close(code=4401)
+                return
+        await websocket.accept()
+        queue = event_bus.subscribe()
+        try:
+            await websocket.send_json(Event(
+                type="system.info",
+                payload={"message": "subscribed", "version": __version__},
+            ).to_json())
+            while True:
+                evt = await queue.get()
+                await websocket.send_json(evt.to_json())
+        except WebSocketDisconnect:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ws_events terminated: %s", exc)
+        finally:
+            event_bus.unsubscribe(queue)
+
+    @app.get("/openapi.yaml", response_class=PlainTextResponse)
+    def openapi_yaml():
+        """Return the OpenAPI spec as YAML (v0.8 — for SDK code generators)."""
+        try:
+            import yaml as _yaml
+        except ImportError:  # pragma: no cover — yaml is in dependencies
+            raise HTTPException(503, "PyYAML not available") from None
+        return PlainTextResponse(
+            _yaml.safe_dump(app.openapi(), sort_keys=False),
+            media_type="application/yaml",
+        )
 
     return app
 
