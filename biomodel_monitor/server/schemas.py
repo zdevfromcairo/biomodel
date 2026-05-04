@@ -207,6 +207,73 @@ class EventOut(BaseModel):
     tenant_id: str | None = None
 
 
+# ---------------------------------------------------------------- v0.9 ----
+
+
+class ModelRecordIn(BaseModel):
+    model_id: str
+    model_version: str
+    training_data_hash: str | None = None
+    framework: str | None = None
+    notes: str | None = None
+
+
+class ModelRecordOut(ModelRecordIn):
+    created_at: str
+    status: Literal["active", "quarantined", "retired"] = "active"
+
+
+class QuarantineIn(BaseModel):
+    note: str | None = None
+
+
+class LineageEdgeIn(BaseModel):
+    upstream_model_id: str
+    upstream_model_version: str
+    downstream_model_id: str
+    downstream_model_version: str
+    kind: str = "derives_from"
+
+
+class LineageEdgeOut(LineageEdgeIn):
+    created_at: str
+
+
+class PolicyEvalRequest(BaseModel):
+    alerts: list[dict[str, Any]] = Field(default_factory=list)
+    model_id: str | None = None
+    model_version: str | None = None
+
+
+class PolicyActionOut(BaseModel):
+    policy: str
+    action: str
+    message: str
+    alert_key: str | None = None
+    model_id: str | None = None
+    model_version: str | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class WassersteinRequest(BaseModel):
+    reference: list[list[float]] | list[float]
+    current: list[list[float]] | list[float]
+    n_projections: int = 64
+    warn: float = 0.10
+    alert: float = 0.25
+    seed: int = 0
+
+
+class WassersteinResponseOut(BaseModel):
+    name: str
+    value: float
+    severity: str
+    n_reference: int
+    n_current: int
+    n_projections: int
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
 __all__ = [
     "AlertOut",
     "AnnotationIn",
@@ -222,11 +289,20 @@ __all__ = [
     "IncidentOut",
     "IngestRequest",
     "IngestResponse",
+    "LineageEdgeIn",
+    "LineageEdgeOut",
     "MMDRequest",
     "MMDResponse",
     "MetricHistoryPoint",
+    "ModelRecordIn",
+    "ModelRecordOut",
+    "PolicyActionOut",
+    "PolicyEvalRequest",
+    "QuarantineIn",
     "RunPipelineRequest",
     "RunPipelineResponse",
     "RunSummary",
+    "WassersteinRequest",
+    "WassersteinResponseOut",
     "WhatIfRequest",
 ]

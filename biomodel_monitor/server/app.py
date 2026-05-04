@@ -34,6 +34,10 @@ class AppSettings:
     tenant_keys: dict[str, tuple[str, str]] = field(default_factory=dict)
     audit_log_path: str | None = None
     discover_plugins: bool = False
+    # Model registry + governance (v0.9). Optional; quarantine is enforced
+    # only when a registry is configured.
+    registry_path: str | None = None
+    policy_path: str | None = None
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "AppSettings":
@@ -53,6 +57,8 @@ class AppSettings:
             cors_origins=[o for o in e.get("BIOMODEL_CORS", "").split(",") if o],
             require_auth=auth_raw not in ("0", "false", "no", "off"),
             batch_root=e.get("BIOMODEL_BATCH_ROOT") or None,
+            registry_path=e.get("BIOMODEL_REGISTRY_PATH") or None,
+            policy_path=e.get("BIOMODEL_POLICY_PATH") or None,
         )
 
 
@@ -165,12 +171,21 @@ def create_app(
         IncidentOut,
         IngestRequest,
         IngestResponse,
+        LineageEdgeIn,
+        LineageEdgeOut,
         MetricHistoryPoint,
         MMDRequest,
         MMDResponse,
+        ModelRecordIn,
+        ModelRecordOut,
+        PolicyActionOut,
+        PolicyEvalRequest,
+        QuarantineIn,
         RunPipelineRequest,
         RunPipelineResponse,
         RunSummary,
+        WassersteinRequest,
+        WassersteinResponseOut,
         WhatIfRequest,
     )
     from biomodel_monitor.store.repository import Annotation, MetricsStore
@@ -311,6 +326,17 @@ def create_app(
     audit_log: AuditLog | None = None
     if settings.audit_log_path:
         audit_log = AuditLog(settings.audit_log_path)
+
+    # Model registry + policy engine (v0.9). Both optional; without them the
+    # server keeps the v0.8 behaviour unchanged.
+    model_registry: ModelRegistry | None = None  # noqa: F821 — forward type
+    if settings.registry_path:
+        from biomodel_monitor.registry import ModelRegistry as _ModelRegistry
+        model_registry = _ModelRegistry(settings.registry_path)
+    policy_engine = None
+    if settings.policy_path:
+        from biomodel_monitor.policy import PolicyEngine as _PolicyEngine
+        policy_engine = _PolicyEngine.from_yaml(Path(settings.policy_path).read_text())
 
     # Plugin registry (v0.7).
     plugin_registry = PluginRegistry()
@@ -921,6 +947,174 @@ def create_app(
             _yaml.safe_dump(app.openapi(), sort_keys=False),
             media_type="application/yaml",
         )
+
+    # ----------------------------------------------------------- v0.9 ---
+
+    def _require_registry():
+        if model_registry is None:
+            raise HTTPException(
+                503, "model registry not configured (set BIOMODEL_REGISTRY_PATH)"
+            )
+        return model_registry
+
+    @app.get("/models", response_model=list[ModelRecordOut])
+    def list_models(
+        model_id: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        _=Depends(require_api_key),
+    ):
+        reg = _require_registry()
+        recs = reg.list(model_id=model_id, status=status)  # type: ignore[arg-type]
+        return [ModelRecordOut(**r.as_dict()) for r in recs]
+
+    @app.get("/models/{model_id}/{model_version}", response_model=ModelRecordOut)
+    def get_model(model_id: str, model_version: str,
+                  _=Depends(require_api_key)):
+        reg = _require_registry()
+        rec = reg.get(model_id, model_version)
+        if rec is None:
+            raise HTTPException(404, f"unknown model {model_id} v{model_version}")
+        return ModelRecordOut(**rec.as_dict())
+
+    @app.post("/models", response_model=ModelRecordOut, status_code=201)
+    def register_model(
+        body: ModelRecordIn = Body(...),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        reg = _require_registry()
+        try:
+            tenant.require("register_model")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.registry import ModelRecord
+        rec = reg.register(ModelRecord(**body.model_dump()))
+        if audit_log is not None:
+            audit_log.append(
+                "register_model", body.model_dump(),
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
+        event_bus.publish(Event(
+            type="model.registered",
+            tenant_id=tenant.tenant_id,
+            payload=rec.as_dict(),
+        ))
+        return ModelRecordOut(**rec.as_dict())
+
+    @app.post("/models/{model_id}/{model_version}/quarantine",
+              response_model=ModelRecordOut)
+    def quarantine_model(
+        model_id: str, model_version: str,
+        body: QuarantineIn = Body(default_factory=QuarantineIn),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        reg = _require_registry()
+        try:
+            tenant.require("quarantine_model")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        try:
+            rec = reg.quarantine(model_id, model_version, note=body.note)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if audit_log is not None:
+            audit_log.append(
+                "quarantine_model",
+                {"model_id": model_id, "model_version": model_version,
+                 "note": body.note},
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
+        event_bus.publish(Event(
+            type="model.quarantined", tenant_id=tenant.tenant_id,
+            payload=rec.as_dict(),
+        ))
+        return ModelRecordOut(**rec.as_dict())
+
+    @app.post("/models/{model_id}/{model_version}/unquarantine",
+              response_model=ModelRecordOut)
+    def unquarantine_model(
+        model_id: str, model_version: str,
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        reg = _require_registry()
+        try:
+            tenant.require("unquarantine_model")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        try:
+            rec = reg.unquarantine(model_id, model_version)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if audit_log is not None:
+            audit_log.append(
+                "unquarantine_model",
+                {"model_id": model_id, "model_version": model_version},
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
+        event_bus.publish(Event(
+            type="model.unquarantined", tenant_id=tenant.tenant_id,
+            payload=rec.as_dict(),
+        ))
+        return ModelRecordOut(**rec.as_dict())
+
+    @app.post("/lineage", response_model=LineageEdgeOut, status_code=201)
+    def add_lineage(
+        body: LineageEdgeIn = Body(...),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        reg = _require_registry()
+        try:
+            tenant.require("add_lineage")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.registry import LineageEdge
+        edge = reg.add_edge(LineageEdge(**body.model_dump()))
+        return LineageEdgeOut(**edge.as_dict())
+
+    @app.get("/lineage/{model_id}/{model_version}")
+    def get_lineage(
+        model_id: str, model_version: str,
+        _=Depends(require_api_key),
+    ):
+        reg = _require_registry()
+        return {
+            "upstreams": [e.as_dict() for e in reg.upstreams(model_id, model_version)],
+            "downstreams": [e.as_dict() for e in reg.downstreams(model_id, model_version)],
+        }
+
+    @app.post("/policy/evaluate", response_model=list[PolicyActionOut])
+    def policy_evaluate(req: PolicyEvalRequest = Body(...),
+                        _=Depends(require_api_key)):
+        if policy_engine is None:
+            raise HTTPException(
+                503, "no policy engine loaded (set BIOMODEL_POLICY_PATH)"
+            )
+        actions = policy_engine.evaluate(
+            req.alerts,
+            model_id=req.model_id, model_version=req.model_version,
+        )
+        return [PolicyActionOut(**a.as_dict()) for a in actions]
+
+    @app.post("/wasserstein", response_model=WassersteinResponseOut)
+    def wasserstein_endpoint(req: WassersteinRequest = Body(...),
+                             _=Depends(require_api_key)):
+        from biomodel_monitor.metrics.wasserstein import sliced_wasserstein
+        try:
+            res = sliced_wasserstein(
+                req.reference, req.current,
+                n_projections=req.n_projections,
+                warn=req.warn, alert=req.alert, seed=req.seed,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return WassersteinResponseOut(**res.as_dict())
+
+    @app.get("/sbom")
+    def sbom_endpoint(_=Depends(require_api_key)):
+        from biomodel_monitor.security import build_sbom
+        return build_sbom()
 
     return app
 

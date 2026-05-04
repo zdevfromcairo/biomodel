@@ -12,8 +12,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/"><img alt="site" src="https://img.shields.io/badge/site-mkdocs--material-009485"/></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab"/>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
-  <img alt="version" src="https://img.shields.io/badge/version-0.8.0-success"/>
-  <img alt="tests" src="https://img.shields.io/badge/tests-235%20passing-brightgreen"/>
+  <img alt="version" src="https://img.shields.io/badge/version-0.9.0-success"/>
+  <img alt="tests" src="https://img.shields.io/badge/tests-260%20passing-brightgreen"/>
 </p>
 
 <p align="center">
@@ -23,7 +23,9 @@
   <a href="https://zdevfromcairo.github.io/biomodel/intelligence/">Intelligence</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/streaming/">Streaming</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/reactive/">Reactive&nbsp;(v0.8)</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/platform/">Platform&nbsp;(v0.9)</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/tenancy/">Tenancy</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/adr/">ADRs</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/metric_library/">Metrics</a>
 </p>
 
@@ -66,22 +68,31 @@ model risk and answers the only question a model owner cares about:
   **embedding-drift via MMD** with permutation p-value, **online CUSUM** change
   detector, per-record **local attribution** (leave-one-out), **drift influence
   graph** between dimensions, OpenAPI-as-YAML at `/openapi.yaml`.
+- **Platform & governance** *(v0.9)* — **model registry** with versions,
+  training-data hash, lineage edges and **quarantine** (audit-trailed,
+  event-streamed); **declarative YAML policy engine** that turns alerts into
+  typed actions (notify / quarantine / promote); **differential-privacy**
+  Laplace mechanism + ε-budget accountant for federated stats; **sliced
+  1-D Wasserstein** drift; **mSPRT canary** monitor with Type-I control at
+  arbitrary stopping times; **CycloneDX-1.5 SBOM** + **SLSA-v1.0** provenance;
+  five MADR-lite **Architecture Decision Records**.
 - **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
   annotations, persistence-aware severity, per-cohort fairness summary.
 
 ## Feature matrix
 
-| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 | v0.8 |
-| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
-| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
-| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ | ✓ |
-| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ | ✓ |
-| Helm chart |  |  |  |  |  |  | ✓ | ✓ |
-| Concurrent pipeline + WebSocket events + MMD + CUSUM |  |  |  |  |  |  |  | ✓ |
+| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 | v0.8 | v0.9 |
+| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
+| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ | ✓ | ✓ |
+| Helm chart |  |  |  |  |  |  | ✓ | ✓ | ✓ |
+| Concurrent pipeline + WebSocket events + MMD + CUSUM |  |  |  |  |  |  |  | ✓ | ✓ |
+| Registry & quarantine + policy engine + DP federation + Wasserstein + mSPRT canary + SBOM |  |  |  |  |  |  |  |  | ✓ |
 
 ## Architecture
 
@@ -160,14 +171,22 @@ by setting `BIOMODEL_STORE_DSN` on the `server` service.
 
 ## What's new
 
-- **v0.8.0 — Reactive core.** Concurrent `pipeline-async` (4× workers, byte-identical
-  results), WebSocket `/ws/events` live event bus with replay, embedding-drift via
-  **MMD** with permutation p-value, online **CUSUM** change detector, per-record
-  **local attribution**, dimension **drift influence graph**, OpenAPI-as-YAML at
-  `/openapi.yaml`, MkDocs custom hero + SVG logo.
-- **v0.7.0 — Multi-tenant, Plugins & Federation.** RBAC tenants, entry-point plug-in
-  system, federated drift/calibration aggregation from sufficient statistics, SHA-256
-  chained audit log, predictive uncertainty, Helm chart, governance & contributing.
+- **v0.9.0 — Platform & Governance.** Model **registry** with quarantine,
+  lineage edges, and a hash-chained audit trail; **declarative YAML
+  policies** that turn alerts into typed actions; **differential-privacy**
+  Laplace noise + ε-budget accountant for federated stats;
+  **sliced-Wasserstein** drift; **mSPRT canary** monitor; **CycloneDX SBOM**
+  + SLSA-v1.0 provenance; first five **Architecture Decision Records**.
+- **v0.8.0 — Reactive core.** Concurrent `pipeline-async` (4× workers,
+  byte-identical results), WebSocket `/ws/events` live event bus with
+  replay, embedding-drift via **MMD** with permutation p-value, online
+  **CUSUM** change detector, per-record **local attribution**, dimension
+  **drift influence graph**, OpenAPI-as-YAML at `/openapi.yaml`, MkDocs
+  custom hero + SVG logo.
+- **v0.7.0 — Multi-tenant, Plugins & Federation.** RBAC tenants, entry-point
+  plug-in system, federated drift/calibration aggregation from sufficient
+  statistics, SHA-256 chained audit log, predictive uncertainty, Helm chart,
+  governance & contributing.
 - **v0.6.0 — Streaming, Forecasting & SDK.** Server-side micro-batching `/ingest`,
   Holt's-linear drift forecasting with ETA-to-breach, split-conformal intervals,
   PCA concept-drift detector, interaction-effect attribution, zero-dependency Python SDK.
@@ -211,22 +230,32 @@ biomodel_monitor/
   plugins/        entry-point discovery for metrics/notifiers/loaders    (v0.7)
   federated/      pooled drift/calibration from sufficient statistics    (v0.7)
   audit/          tamper-evident, hash-chained audit log                 (v0.7)
+  registry/       model registry: versions, status, lineage, quarantine  (v0.9)
+  policy/         declarative YAML governance policy engine              (v0.9)
+  canary/         mSPRT A/B canary monitor                               (v0.9)
+  security/       CycloneDX SBOM + SLSA provenance                       (v0.9)
+  intelligence/   + local_attribution, drift_graph                       (v0.8)
   dependency/     cross-model dependency graph + alert attribution
   reports/        Jinja2 HTML + Markdown templates + regulatory bundle
   server/         FastAPI app, API-key auth, /metrics, structured logs,  (v0.4)
                   /ingest streaming, /forecast,                          (v0.6)
                   /tenants/whoami, /audit/*, /federate/*, /plugins       (v0.7)
+                  /mmd, /cusum, /events, /ws/events, /openapi.yaml       (v0.8)
+                  /models, /lineage, /policy/evaluate,                   (v0.9)
+                  /wasserstein, /sbom                                    (v0.9)
   dashboard/      Streamlit dashboard
   cli.py          biomodel-monitor run|watch|process-queue|incidents|
                   serve|explain|whatif|model-card|forecast|ingest|       (v0.6)
                   client-call|tenant|plugins|federate|audit-verify       (v0.7)
                   pipeline-async|mmd|cusum|drift-graph|events-tail       (v0.8)
+                  registry|policy-eval|wasserstein|sbom|canary           (v0.9)
 deploy/
   helm/biomodel-monitor/    official Helm chart                          (v0.7)
 examples/
   pathology_pipeline/   runnable synthetic pathology integration
 docs/              MkDocs Material site (deployed to GitHub Pages)
-tests/             unit / integration / domain   (235 tests)
+                  + ADRs under docs/adr/                                 (v0.9)
+tests/             unit / integration / domain   (260 tests)
 ```
 
 ## Documentation
@@ -244,6 +273,8 @@ Highlights:
 - [Forecasting & ETA-to-breach (v0.6)](docs/forecasting.md)
 - [Python SDK (v0.6)](docs/sdk.md)
 - [Reactive core (v0.8)](docs/reactive.md)
+- [Platform & Governance (v0.9)](docs/platform.md)
+- [Architecture Decision Records (v0.9)](docs/adr/index.md)
 - [Multi-tenancy & RBAC (v0.7)](docs/tenancy.md)
 - [Plugins (v0.7)](docs/plugins.md)
 - [Federated monitoring (v0.7)](docs/federation.md)

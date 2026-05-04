@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "biomodel-monitor"
-version = "0.8.0"
+version = "0.9.0"
 description = "Post-deployment monitoring and assurance platform for multimodal medical AI."
 readme = "README.md"
 license = { file = "LICENSE" }

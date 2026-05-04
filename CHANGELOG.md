@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.9.0 — Platform & Governance
+
+### Added
+- **Model registry + lineage** (`registry/`) — SQLite-backed catalogue of
+  `(model_id, model_version)` records with `status`
+  (`active`/`quarantined`/`retired`), training-data hash, framework, notes
+  and a directed `lineage` table. Thread-safe (lock-protected) so the
+  FastAPI worker pool can share a single registry. Endpoints:
+  `GET/POST /models`, `GET /models/{id}/{ver}`,
+  `POST /models/{id}/{ver}/quarantine`, `…/unquarantine`,
+  `POST /lineage`, `GET /lineage/{id}/{ver}`.
+- **Declarative governance policies** (`policy/`) — load YAML rules and
+  evaluate them against alerts to produce typed `PolicyAction`
+  (`notify` / `quarantine` / `promote`). Endpoint `POST /policy/evaluate`,
+  CLI `biomodel-monitor policy-eval`.
+- **Differential-privacy federation** (`federated/dp.py`) — Laplace
+  mechanism with `PrivacyAccountant` for sequential ε-composition;
+  `privatise_histogram` and `privatise_mean` helpers; non-negative
+  post-processing on counts.
+- **Sliced 1-D Wasserstein** (`metrics/wasserstein.py`) — closed-form 1-D
+  W₁ for univariate inputs, random-projection sliced W₁ for multivariate
+  embeddings; severity bands. Endpoint `POST /wasserstein`, CLI
+  `biomodel-monitor wasserstein`.
+- **Canary deployments via mSPRT** (`canary/`) — mixture sequential
+  probability ratio test (Howard et al. 2021), peek-as-often-as-you-like
+  Type-I control, returns `promote` / `rollback` / `inconclusive`. CLI
+  `biomodel-monitor canary`.
+- **SBOM + SLSA provenance** (`security/sbom.py`) —
+  CycloneDX-1.5 lite SBOM (`build_sbom`) and in-toto SLSA-v1.0 provenance
+  with SHA-256 subject digests (`build_provenance`). Endpoint `GET /sbom`,
+  CLI `biomodel-monitor sbom`.
+- **Architecture Decision Records** under `docs/adr/` — five MADR-lite ADRs
+  documenting the durable design choices (severity contract, SQLite
+  default, opt-in tenancy, registry & quarantine).
+- **Tenant permissions extended** with `register_model`, `add_lineage`
+  (writer) and `quarantine_model`, `unquarantine_model` (admin).
+
+### Changed
+- Python SDK `User-Agent` bumped to `biomodel-monitor-sdk/0.9`.
+- Server `AppSettings` gains `registry_path` and `policy_path`
+  (env vars `BIOMODEL_REGISTRY_PATH`, `BIOMODEL_POLICY_PATH`).
+- New docs page *Platform & Governance (v0.9)* and an ADR index.
+
+### Tested
+- 260 tests passing (was 235), including 17 new unit tests for the
+  v0.9 modules and 8 new integration tests for the new endpoints.
+
 ## v0.8.0 — Reactive core
 
 ### Added

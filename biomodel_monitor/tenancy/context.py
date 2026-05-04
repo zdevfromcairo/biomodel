@@ -25,8 +25,12 @@ PERMISSIONS: dict[str, Role] = {
     "ingest": "writer",
     "promote_baseline": "writer",
     "whatif": "writer",
+    "register_model": "writer",
+    "add_lineage": "writer",
     # Admin.
     "manage_tenants": "admin",
+    "quarantine_model": "admin",
+    "unquarantine_model": "admin",
 }
 
 

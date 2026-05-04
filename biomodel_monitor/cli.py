@@ -782,3 +782,144 @@ def events_tail_cmd(base_url: str, api_key: str, limit: int) -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
+
+
+# --------------------------------------------------------------------------- #
+# v0.9 — registry, policy, sbom, wasserstein, canary
+# --------------------------------------------------------------------------- #
+
+
+@main.group("registry")
+def registry_grp() -> None:
+    """Model registry: register, list, quarantine, lineage (v0.9)."""
+
+
+@registry_grp.command("register")
+@click.option("--db", "db_path", required=True, type=click.Path())
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--training-data-hash", default=None)
+@click.option("--framework", default=None)
+@click.option("--notes", default=None)
+def registry_register_cmd(db_path: str, model_id: str, model_version: str,
+                          training_data_hash: str | None,
+                          framework: str | None, notes: str | None) -> None:
+    """Register a model version in the registry."""
+    from biomodel_monitor.registry import ModelRecord, ModelRegistry
+    reg = ModelRegistry(db_path)
+    rec = reg.register(ModelRecord(
+        model_id=model_id, model_version=model_version,
+        training_data_hash=training_data_hash, framework=framework,
+        notes=notes,
+    ))
+    click.echo(json.dumps(rec.as_dict(), indent=2, default=str))
+    reg.close()
+
+
+@registry_grp.command("list")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", default=None)
+@click.option("--status", type=click.Choice(["active", "quarantined", "retired"]),
+              default=None)
+def registry_list_cmd(db_path: str, model_id: str | None,
+                      status: str | None) -> None:
+    """List models in the registry."""
+    from biomodel_monitor.registry import ModelRegistry
+    reg = ModelRegistry(db_path)
+    rows = reg.list(model_id=model_id, status=status)  # type: ignore[arg-type]
+    for r in rows:
+        click.echo(json.dumps(r.as_dict(), default=str))
+    reg.close()
+
+
+@registry_grp.command("quarantine")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+@click.option("--note", default=None)
+def registry_quarantine_cmd(db_path: str, model_id: str, model_version: str,
+                            note: str | None) -> None:
+    """Quarantine a model version."""
+    from biomodel_monitor.registry import ModelRegistry
+    reg = ModelRegistry(db_path)
+    rec = reg.quarantine(model_id, model_version, note=note)
+    click.echo(json.dumps(rec.as_dict(), indent=2, default=str))
+    reg.close()
+
+
+@registry_grp.command("lineage")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True)
+@click.option("--model-version", required=True)
+def registry_lineage_cmd(db_path: str, model_id: str, model_version: str) -> None:
+    """Print upstream/downstream lineage for a model version."""
+    from biomodel_monitor.registry import ModelRegistry
+    reg = ModelRegistry(db_path)
+    out = {
+        "upstreams": [e.as_dict() for e in reg.upstreams(model_id, model_version)],
+        "downstreams": [e.as_dict() for e in reg.downstreams(model_id, model_version)],
+    }
+    click.echo(json.dumps(out, indent=2, default=str))
+    reg.close()
+
+
+@main.command("policy-eval")
+@click.option("--policies", "policy_path", required=True, type=click.Path(exists=True))
+@click.option("--alerts", "alerts_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", default=None)
+@click.option("--model-version", default=None)
+def policy_eval_cmd(policy_path: str, alerts_path: str,
+                    model_id: str | None, model_version: str | None) -> None:
+    """Evaluate declarative governance policies against a list of alerts (v0.9)."""
+    from biomodel_monitor.policy import PolicyEngine
+    eng = PolicyEngine.from_yaml(Path(policy_path).read_text())
+    alerts = json.loads(Path(alerts_path).read_text())
+    actions = eng.evaluate(alerts, model_id=model_id, model_version=model_version)
+    for a in actions:
+        click.echo(json.dumps(a.as_dict(), default=str))
+
+
+@main.command("wasserstein")
+@click.option("--reference", "reference_path", required=True, type=click.Path(exists=True))
+@click.option("--current", "current_path", required=True, type=click.Path(exists=True))
+@click.option("--projections", default=64, show_default=True, type=int)
+@click.option("--seed", default=0, show_default=True, type=int)
+def wasserstein_cmd(reference_path: str, current_path: str,
+                    projections: int, seed: int) -> None:
+    """Sliced 1-D Wasserstein-1 distance between two embedding sets (v0.9)."""
+    from biomodel_monitor.metrics.wasserstein import sliced_wasserstein
+    ref = json.loads(Path(reference_path).read_text())
+    cur = json.loads(Path(current_path).read_text())
+    res = sliced_wasserstein(ref, cur, n_projections=projections, seed=seed)
+    click.echo(json.dumps(res.as_dict(), indent=2, default=str))
+
+
+@main.command("sbom")
+@click.option("--out", "out_path", default=None, type=click.Path())
+def sbom_cmd(out_path: str | None) -> None:
+    """Emit a CycloneDX-1.5 SBOM for the running environment (v0.9)."""
+    from biomodel_monitor.security import build_sbom
+    body = json.dumps(build_sbom(), indent=2, default=str)
+    if out_path:
+        Path(out_path).write_text(body)
+        click.echo(f"wrote SBOM to {out_path}")
+    else:
+        click.echo(body)
+
+
+@main.command("canary")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON file with {control: [...], canary: [...]} score arrays.")
+@click.option("--alpha", default=0.01, show_default=True, type=float)
+@click.option("--tau", default=0.1, show_default=True, type=float)
+@click.option("--min-n", default=30, show_default=True, type=int)
+def canary_cmd(input_path: str, alpha: float, tau: float, min_n: int) -> None:
+    """Sequential A/B canary verdict via mSPRT (v0.9)."""
+    from biomodel_monitor.canary import CanaryMonitor
+    body = json.loads(Path(input_path).read_text())
+    mon = CanaryMonitor(alpha=alpha, tau=tau, min_n=min_n)
+    for x in body.get("control", []):
+        mon.add_control(float(x))
+    for x in body.get("canary", []):
+        mon.add_canary(float(x))
+    click.echo(json.dumps(mon.decide().as_dict(), indent=2, default=str))

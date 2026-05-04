@@ -63,8 +63,13 @@ class ModelRegistry:
 
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
-        self._conn = sqlite3.connect(self.path)
+        # ``check_same_thread=False`` lets the registry be shared across the
+        # FastAPI worker threads. Writes are serialised with a lock so we
+        # still get safe single-writer semantics on plain SQLite.
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        from threading import RLock
+        self._lock = RLock()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -100,26 +105,28 @@ class ModelRegistry:
 
     # ---------------------------------------------------------------- models
     def register(self, record: ModelRecord) -> ModelRecord:
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO models (
-                model_id, model_version, training_data_hash, framework,
-                created_at, status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.model_id, record.model_version, record.training_data_hash,
-                record.framework, record.created_at, record.status, record.notes,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO models (
+                    model_id, model_version, training_data_hash, framework,
+                    created_at, status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.model_id, record.model_version, record.training_data_hash,
+                    record.framework, record.created_at, record.status, record.notes,
+                ),
+            )
+            self._conn.commit()
         return record
 
     def get(self, model_id: str, model_version: str) -> ModelRecord | None:
-        row = self._conn.execute(
-            "SELECT * FROM models WHERE model_id=? AND model_version=?",
-            (model_id, model_version),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM models WHERE model_id=? AND model_version=?",
+                (model_id, model_version),
+            ).fetchone()
         return None if row is None else ModelRecord(**dict(row))
 
     def list(self, *, model_id: str | None = None,
@@ -133,7 +140,8 @@ class ModelRegistry:
             sql += " AND status = ?"
             params.append(status)
         sql += " ORDER BY created_at DESC"
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return [ModelRecord(**dict(r)) for r in rows]
 
     # --------------------------------------------------------------- status
@@ -170,41 +178,44 @@ class ModelRegistry:
 
     # -------------------------------------------------------------- lineage
     def add_edge(self, edge: LineageEdge) -> LineageEdge:
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO lineage (
-                upstream_model_id, upstream_model_version,
-                downstream_model_id, downstream_model_version,
-                kind, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                edge.upstream_model_id, edge.upstream_model_version,
-                edge.downstream_model_id, edge.downstream_model_version,
-                edge.kind, edge.created_at,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO lineage (
+                    upstream_model_id, upstream_model_version,
+                    downstream_model_id, downstream_model_version,
+                    kind, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    edge.upstream_model_id, edge.upstream_model_version,
+                    edge.downstream_model_id, edge.downstream_model_version,
+                    edge.kind, edge.created_at,
+                ),
+            )
+            self._conn.commit()
         return edge
 
     def upstreams(self, model_id: str, model_version: str) -> list[LineageEdge]:
-        rows = self._conn.execute(
-            """
-            SELECT * FROM lineage
-            WHERE downstream_model_id = ? AND downstream_model_version = ?
-            """,
-            (model_id, model_version),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM lineage
+                WHERE downstream_model_id = ? AND downstream_model_version = ?
+                """,
+                (model_id, model_version),
+            ).fetchall()
         return [LineageEdge(**dict(r)) for r in rows]
 
     def downstreams(self, model_id: str, model_version: str) -> list[LineageEdge]:
-        rows = self._conn.execute(
-            """
-            SELECT * FROM lineage
-            WHERE upstream_model_id = ? AND upstream_model_version = ?
-            """,
-            (model_id, model_version),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM lineage
+                WHERE upstream_model_id = ? AND upstream_model_version = ?
+                """,
+                (model_id, model_version),
+            ).fetchall()
         return [LineageEdge(**dict(r)) for r in rows]
 
 
