@@ -12,8 +12,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/"><img alt="site" src="https://img.shields.io/badge/site-mkdocs--material-009485"/></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab"/>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
-  <img alt="version" src="https://img.shields.io/badge/version-0.9.0-success"/>
-  <img alt="tests" src="https://img.shields.io/badge/tests-260%20passing-brightgreen"/>
+  <img alt="version" src="https://img.shields.io/badge/version-0.11.0-success"/>
+  <img alt="tests" src="https://img.shields.io/badge/tests-307%20passing-brightgreen"/>
 </p>
 
 <p align="center">
@@ -24,6 +24,8 @@
   <a href="https://zdevfromcairo.github.io/biomodel/streaming/">Streaming</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/reactive/">Reactive&nbsp;(v0.8)</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/platform/">Platform&nbsp;(v0.9)</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/closed_loop/">Closed&nbsp;loop&nbsp;(v0.10)</a> ·
+  <a href="https://zdevfromcairo.github.io/biomodel/observability/">Observability&nbsp;(v0.11)</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/tenancy/">Tenancy</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/adr/">ADRs</a> ·
   <a href="https://zdevfromcairo.github.io/biomodel/metric_library/">Metrics</a>
@@ -76,23 +78,41 @@ model risk and answers the only question a model owner cares about:
   1-D Wasserstein** drift; **mSPRT canary** monitor with Type-I control at
   arbitrary stopping times; **CycloneDX-1.5 SBOM** + **SLSA-v1.0** provenance;
   five MADR-lite **Architecture Decision Records**.
+- **Closed loop** *(v0.10)* — **active-learning queue** (entropy / margin /
+  least-confidence / **BALD**) persisted in SQLite so reviewers resume across
+  restarts; **split-conformal prediction** (APS + LAC) with marginal coverage
+  guarantee `≥ 1 − α`; **expert-label feedback** that re-runs calibration on
+  the human-validated subset; **shadow-deployment comparator** with paired
+  **McNemar** + paired **bootstrap** so a canary can be judged on the
+  *same* records production saw, with full statistical power.
+- **Observability mesh & multi-modal** *(v0.11)* — opt-in **OpenTelemetry**
+  tracer + meter (no-op when the API package is missing, so existing
+  deployments are unchanged); **per-modality validators** for image
+  (resolution / intensity / channels), text (token-length / vocab Jaccard)
+  and tabular (per-column missingness deltas); **vector embedding store**
+  with brute-force cosine k-NN that answers *"which historical case is
+  this most like?"*; **model fingerprinting** — a SHA-256 over predictions
+  on a fixed canary set, deterministic to floating-point noise, that
+  detects silent weight substitution.
 - **Audit-ready** — signed regulatory export bundles (SHA-256 manifest), persistent
   annotations, persistence-aware severity, per-cohort fairness summary.
 
 ## Feature matrix
 
-| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 | v0.8 | v0.9 |
-| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
-| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
-| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ | ✓ | ✓ |
-| Helm chart |  |  |  |  |  |  | ✓ | ✓ | ✓ |
-| Concurrent pipeline + WebSocket events + MMD + CUSUM |  |  |  |  |  |  |  | ✓ | ✓ |
-| Registry & quarantine + policy engine + DP federation + Wasserstein + mSPRT canary + SBOM |  |  |  |  |  |  |  |  | ✓ |
+| Capability | v0.1 | v0.2 | v0.3 | v0.4 | v0.5 | v0.6 | v0.7 | v0.8 | v0.9 | v0.10 | v0.11 |
+| ---------- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :---: | :---: |
+| Drift / calibration / subgroup | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plausibility rule packs (path / rad / omics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Persistent store + incidents |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FastAPI server, Slack/PD/Teams |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Root-cause attribution + model card |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Streaming `/ingest` + forecasting + SDK |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| RBAC tenants + audit log + plugins + federation |  |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Helm chart |  |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Concurrent pipeline + WebSocket events + MMD + CUSUM |  |  |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
+| Registry & quarantine + policy engine + DP federation + Wasserstein + mSPRT canary + SBOM |  |  |  |  |  |  |  |  | ✓ | ✓ | ✓ |
+| **Closed loop** — active-learning queue + conformal prediction + expert-label feedback + shadow-deployment comparator |  |  |  |  |  |  |  |  |  | ✓ | ✓ |
+| **Observability mesh** — OpenTelemetry tracer/meter + per-modality (image/text/tabular) validators + vector k-NN explanations + model fingerprinting |  |  |  |  |  |  |  |  |  |  | ✓ |
 
 ## Architecture
 
@@ -171,6 +191,20 @@ by setting `BIOMODEL_STORE_DSN` on the `server` service.
 
 ## What's new
 
+- **v0.11.0 — Observability mesh & multi-modal.** Opt-in **OpenTelemetry**
+  tracer + meter (no-op fallback so existing deployments are unaffected);
+  per-modality validators for **image / text / tabular** that consume
+  lightweight summary stats; SQLite-backed **vector store** with
+  brute-force cosine k-NN for *"most similar historical case"*
+  explanations; deterministic **model fingerprinting** via SHA-256 over
+  predictions on a fixed canary input set, robust to harmless
+  floating-point noise.
+- **v0.10.0 — Closed loop.** Persistent **active-learning queue** with
+  uncertainty strategies (entropy / margin / least-confidence / **BALD**);
+  **split-conformal prediction** (APS + LAC) with marginal coverage
+  guarantees; **expert-label feedback** that re-runs calibration on the
+  human-validated subset; **shadow-deployment comparator** with paired
+  McNemar + paired bootstrap.
 - **v0.9.0 — Platform & Governance.** Model **registry** with quarantine,
   lineage edges, and a hash-chained audit trail; **declarative YAML
   policies** that turn alerts into typed actions; **differential-privacy**
@@ -234,6 +268,14 @@ biomodel_monitor/
   policy/         declarative YAML governance policy engine              (v0.9)
   canary/         mSPRT A/B canary monitor                               (v0.9)
   security/       CycloneDX SBOM + SLSA provenance                       (v0.9)
+  active_learning/ uncertainty-driven labelling priority queue           (v0.10)
+  conformal/      split-conformal prediction sets (APS + LAC)            (v0.10)
+  feedback/       expert-label merge → recompute calibration             (v0.10)
+  shadow/         paired McNemar + paired bootstrap comparators          (v0.10)
+  observability/  optional OpenTelemetry tracer + meter                  (v0.11)
+  modality/       per-modality validators (image / text / tabular)       (v0.11)
+  vector/         embedding store + brute-force k-NN explanations        (v0.11)
+  fingerprint/    model fingerprint via canary-input prediction hash     (v0.11)
   intelligence/   + local_attribution, drift_graph                       (v0.8)
   dependency/     cross-model dependency graph + alert attribution
   reports/        Jinja2 HTML + Markdown templates + regulatory bundle
@@ -243,12 +285,16 @@ biomodel_monitor/
                   /mmd, /cusum, /events, /ws/events, /openapi.yaml       (v0.8)
                   /models, /lineage, /policy/evaluate,                   (v0.9)
                   /wasserstein, /sbom                                    (v0.9)
+                  /active-learning/*, /conformal/*, /shadow/*           (v0.10)
+                  /modality/check, /vector/*, /fingerprint, /fingerprint/compare (v0.11)
   dashboard/      Streamlit dashboard
   cli.py          biomodel-monitor run|watch|process-queue|incidents|
                   serve|explain|whatif|model-card|forecast|ingest|       (v0.6)
                   client-call|tenant|plugins|federate|audit-verify       (v0.7)
                   pipeline-async|mmd|cusum|drift-graph|events-tail       (v0.8)
                   registry|policy-eval|wasserstein|sbom|canary           (v0.9)
+                  active-learning|conformal|shadow                      (v0.10)
+                  otel-status|modality-check|vector|fingerprint         (v0.11)
 deploy/
   helm/biomodel-monitor/    official Helm chart                          (v0.7)
 examples/

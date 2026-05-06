@@ -75,6 +75,8 @@ nav:
       - Federated monitoring (v0.7): federation.md
       - Reactive core (v0.8): reactive.md
       - Platform & Governance (v0.9): platform.md
+      - Closed loop (v0.10): closed_loop.md
+      - Observability mesh & multi-modal (v0.11): observability.md
       - ADRs:
           - Index: adr/index.md
           - 0001 Record architecture decisions: adr/0001-record-architecture-decisions.md
@@ -82,6 +84,8 @@ nav:
           - 0003 SQLite default store: adr/0003-sqlite-default-store.md
           - 0004 Multi-tenancy opt-in: adr/0004-multi-tenancy-opt-in.md
           - 0005 Model registry & quarantine: adr/0005-model-registry-quarantine.md
+          - 0006 Closed-loop feedback: adr/0006-closed-loop.md
+          - 0007 Observability mesh: adr/0007-observability-mesh.md
   - Guides:
       - Tutorial — your first run: tutorial.md
       - Operating in production: operations.md

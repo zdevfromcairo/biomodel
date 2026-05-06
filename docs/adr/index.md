@@ -11,6 +11,8 @@ contributors keep asking about.
 | [0003](0003-sqlite-default-store.md)          | SQLite as the default persistence backend       | Accepted |
 | [0004](0004-multi-tenancy-opt-in.md)          | Multi-tenancy is opt-in and additive            | Accepted |
 | [0005](0005-model-registry-quarantine.md)     | Model registry + quarantine as v0.9 governance primitive | Accepted |
+| [0006](0006-closed-loop.md)                   | Closed-loop feedback as v0.10 capability                  | Accepted |
+| [0007](0007-observability-mesh.md)            | Observability mesh & multi-modal as v0.11 capability      | Accepted |
 
 We use the [MADR](https://adr.github.io/madr/) lite format: *Context →
 Decision → Consequences*.

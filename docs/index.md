@@ -48,6 +48,19 @@ hand to a regulator.
     RBAC tenants, plug-in entry points, federated drift/calibration from
     sufficient statistics, tamper-evident SHA-256 audit log, Helm chart.
 
+-   :material-school: __Closed loop__ &nbsp;<small>v0.10</small>
+
+    Active-learning queue (entropy / margin / **BALD**) + split-conformal
+    prediction with marginal coverage + expert-label feedback into
+    calibration + paired shadow-deployment comparator (McNemar + bootstrap).
+
+-   :material-radar: __Observability mesh & multi-modal__ &nbsp;<small>v0.11</small>
+
+    Opt-in **OpenTelemetry** tracer + meter, per-modality validators
+    (image / text / tabular), vector embedding store with **k-NN**
+    explanations, deterministic **model fingerprinting** that detects
+    silent weight substitution.
+
 </div>
 
 ## What it answers

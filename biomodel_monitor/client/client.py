@@ -89,7 +89,7 @@ class BioModelMonitorClient:
             qp = {k: v for k, v in params.items() if v is not None}
             if qp:
                 url = url + ("&" if "?" in url else "?") + urlencode(qp, doseq=True)
-        headers = {"Accept": "application/json", "User-Agent": "biomodel-monitor-sdk/0.9"}
+        headers = {"Accept": "application/json", "User-Agent": "biomodel-monitor-sdk/0.11"}
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         body: bytes | None = None

@@ -1,5 +1,95 @@
 # Changelog
 
+## v0.11.0 — Observability Mesh & Multi-Modal
+
+### Added
+- **OpenTelemetry integration** (`observability/`) — opt-in tracer + meter
+  with a `span()` context manager and `counter` / `histogram` instruments.
+  Falls back to no-op objects if the OTEL API package is missing or the
+  `BIOMODEL_OTEL` switch is off, so existing deployments keep working
+  unchanged. Configurable via standard `OTEL_*` env vars; `status()`
+  helper plus `biomodel-monitor otel-status` CLI for a quick health check.
+- **Per-modality validators** (`modality/`) — `check_image`, `check_text`
+  and `check_tabular` produce v0.1-style severity results from
+  *summary statistics* (no Pillow/NLTK dependency). Image catches
+  resolution / intensity drift and channel-count changes; text uses
+  token-length, vocab-size and an optional Jaccard overlap on top tokens;
+  tabular ranks per-column missingness deltas. Endpoint
+  `POST /modality/check`, CLI `biomodel-monitor modality-check`.
+- **Vector embedding store** (`vector/`) — SQLite-backed namespaced store
+  with a brute-force cosine k-NN query, designed so a clinician asking
+  *"what historical case is this most like?"* gets an immediate, auditable
+  answer. Endpoints `POST /vector/add` / `POST /vector/query`, CLI
+  `biomodel-monitor vector add|query`. The `VectorStore` cleanly degrades
+  when a namespace was re-trained at a new embedding dim.
+- **Model fingerprinting** (`fingerprint/`) — SHA-256 over a model's
+  prediction vector on a fixed canary input set, with deterministic
+  rounding to absorb harmless CUDA non-determinism. Lets you prove the
+  weights serving production today are exactly the ones you signed off
+  on. Endpoints `POST /fingerprint` and `POST /fingerprint/compare`, CLI
+  `biomodel-monitor fingerprint`.
+
+### Server / SDK
+- New tenant permissions: `modality_check` (viewer), `vector_query`
+  (viewer), `vector_add` (writer), `fingerprint_compute` (writer).
+- New `AppSettings.vector_store_path` (env `BIOMODEL_VECTOR_STORE_PATH`).
+- SDK User-Agent bumped to `biomodel-monitor-sdk/0.11`.
+
+### Docs
+- New docs page *Observability mesh & multi-modal (v0.11)*.
+- New ADR `0007-observability-mesh.md`.
+- README feature matrix extended through v0.11.
+
+### Tests
+- 20 new unit tests covering the four modules and 4 new integration
+  tests covering the new endpoints. **307 tests pass total**, ruff clean.
+
+## v0.10.0 — Closed-Loop
+
+### Added
+- **Active-learning queue** (`active_learning/`) — uncertainty query
+  strategies (`entropy`, `margin`, `least_confidence`, `BALD`) plus a
+  persistent SQLite priority queue keyed by
+  `(model_id, model_version, record_id)`. Reviewers pick up where they
+  left off across restarts. Endpoints
+  `POST /active-learning/enqueue`, `GET /active-learning/{id}/{ver}/queue`,
+  `POST .../{record}/label`, `GET .../stats`. CLI subcommands
+  `biomodel-monitor active-learning enqueue|queue|label`.
+- **Split-conformal prediction** (`conformal/`) — APS and LAC scoring
+  functions with the standard finite-sample correction; produces
+  prediction sets with marginal coverage `≥ 1 − α`. Result objects honour
+  the v0.4 severity contract (severity bands on mean set size).
+  Endpoints `POST /conformal/calibrate` and `POST /conformal/predict`,
+  CLI `biomodel-monitor conformal`.
+- **Expert-label feedback** (`feedback/`) — strict merge of expert labels
+  on top of an existing prediction batch (expert wins, unlabelled rows are
+  skipped, fail-loud when nothing overlaps), with a `recompute_ece`
+  convenience that reruns the v0.4 calibration metric on the now
+  human-validated subset.
+- **Shadow-deployment comparator** (`shadow/`) — paired McNemar test
+  (exact two-sided binomial, no scipy) on per-record correctness flags
+  and a paired bootstrap on continuous loss / score values, both with
+  v0.4 severity bands. Endpoints `POST /shadow/mcnemar` and
+  `POST /shadow/bootstrap`, CLI `biomodel-monitor shadow`.
+
+### Server
+- New tenant permissions: `enqueue_label` (writer), `submit_label`
+  (operator), `shadow_compare` (viewer), `conformal_calibrate` (writer).
+- New `AppSettings.active_learning_path` (env
+  `BIOMODEL_ACTIVE_LEARNING_PATH`); endpoints return `503` when the queue
+  isn't configured.
+- All mutating new endpoints emit hash-chained audit-log entries.
+
+### Docs
+- New docs page *Closed-loop (v0.10)*.
+- New ADR `0006-closed-loop.md`.
+- README feature matrix gains a v0.10 row.
+
+### Tests
+- 19 new unit tests for the four modules and 4 new integration tests for
+  the new endpoints. All metric / queue / store types ship `as_dict` and
+  honour the existing severity contract.
+
 ## v0.9.0 — Platform & Governance
 
 ### Added

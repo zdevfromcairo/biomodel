@@ -923,3 +923,217 @@ def canary_cmd(input_path: str, alpha: float, tau: float, min_n: int) -> None:
     for x in body.get("canary", []):
         mon.add_canary(float(x))
     click.echo(json.dumps(mon.decide().as_dict(), indent=2, default=str))
+
+
+# --------------------------------------------------------------------------- #
+# v0.10 — closed-loop: active learning, conformal, shadow, feedback
+# --------------------------------------------------------------------------- #
+
+
+@main.group("active-learning")
+def active_learning_grp() -> None:
+    """Closed-loop active-learning queue commands (v0.10)."""
+
+
+@active_learning_grp.command("enqueue")
+@click.option("--db", "db_path", required=True, type=click.Path())
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {model_id, model_version, items:[{record_id, "
+                   "probs|score, strategy}]}")
+def al_enqueue_cmd(db_path: str, input_path: str) -> None:
+    """Enqueue records for expert labelling, scored by an uncertainty strategy."""
+    from biomodel_monitor.active_learning import (
+        ActiveLearningQueue,
+        QueueItem,
+        score_record,
+    )
+    body = json.loads(Path(input_path).read_text())
+    q = ActiveLearningQueue(db_path)
+    n = 0
+    for it in body.get("items", []):
+        score = it.get("score")
+        if score is None:
+            score = score_record(
+                it["probs"], strategy=it.get("strategy", "entropy"),
+            )
+        q.enqueue(QueueItem(
+            model_id=body["model_id"],
+            model_version=body["model_version"],
+            record_id=it["record_id"],
+            score=float(score),
+            strategy=it.get("strategy", "entropy"),
+            note=it.get("note"),
+        ))
+        n += 1
+    q.close()
+    click.echo(f"enqueued {n} records into {db_path}")
+
+
+@active_learning_grp.command("queue")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True, type=str)
+@click.option("--model-version", required=True, type=str)
+@click.option("--limit", default=10, show_default=True, type=int)
+def al_queue_cmd(db_path: str, model_id: str, model_version: str,
+                 limit: int) -> None:
+    """Print the next labelling batch for a (model_id, model_version)."""
+    from biomodel_monitor.active_learning import ActiveLearningQueue
+    q = ActiveLearningQueue(db_path)
+    items = q.next_batch(model_id, model_version, limit=limit)
+    click.echo(json.dumps([i.as_dict() for i in items], indent=2, default=str))
+    q.close()
+
+
+@active_learning_grp.command("label")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--model-id", required=True, type=str)
+@click.option("--model-version", required=True, type=str)
+@click.option("--record-id", required=True, type=str)
+@click.option("--label", required=True, type=str)
+@click.option("--note", default=None, type=str)
+def al_label_cmd(db_path: str, model_id: str, model_version: str,
+                 record_id: str, label: str, note: str | None) -> None:
+    """Submit an expert label for a queued record."""
+    from biomodel_monitor.active_learning import ActiveLearningQueue
+    q = ActiveLearningQueue(db_path)
+    try:
+        coerced: int | str = int(label)
+    except ValueError:
+        coerced = label
+    item = q.submit_label(model_id, model_version, record_id,
+                          label=coerced, note=note)
+    click.echo(json.dumps(item.as_dict(), indent=2, default=str))
+    q.close()
+
+
+@main.command("conformal")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {probs:[[..]], labels:[..], alpha, score_fn}")
+@click.option("--test-input", "test_input_path", default=None,
+              type=click.Path(exists=True),
+              help="Optional JSON: {probs:[[..]]} to predict sets for.")
+def conformal_cmd(input_path: str, test_input_path: str | None) -> None:
+    """Calibrate a split-conformal predictor and (optionally) score test rows."""
+    from biomodel_monitor.conformal import calibrate, predict_sets
+    body = json.loads(Path(input_path).read_text())
+    cal = calibrate(
+        body["probs"], body["labels"],
+        alpha=float(body.get("alpha", 0.1)),
+        score_fn=body.get("score_fn", "aps"),
+    )
+    out: dict = {"calibration": cal.as_dict()}
+    if test_input_path:
+        t = json.loads(Path(test_input_path).read_text())
+        pred = predict_sets(t["probs"], cal)
+        out["prediction"] = pred.as_dict()
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("shadow")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {kind: 'mcnemar'|'bootstrap', control, canary, ...}")
+def shadow_cmd(input_path: str) -> None:
+    """Compare a shadow-deployed model against control on paired data."""
+    from biomodel_monitor.shadow import mcnemar, paired_bootstrap_diff
+    body = json.loads(Path(input_path).read_text())
+    kind = body.get("kind", "mcnemar")
+    if kind == "mcnemar":
+        res = mcnemar(body["control"], body["canary"])
+    elif kind == "bootstrap":
+        res = paired_bootstrap_diff(
+            body["control"], body["canary"],
+            n_boot=int(body.get("n_boot", 2000)),
+            seed=int(body.get("seed", 0)),
+            warn=float(body.get("warn", 0.02)),
+            alert=float(body.get("alert", 0.05)),
+        )
+    else:
+        raise click.BadParameter(f"unknown shadow test kind: {kind!r}")
+    click.echo(json.dumps(res.as_dict(), indent=2, default=str))
+
+
+# --------------------------------------------------------------------------- #
+# v0.11 — observability mesh, multi-modal, vector, fingerprint
+# --------------------------------------------------------------------------- #
+
+
+@main.command("otel-status")
+def otel_status_cmd() -> None:
+    """Print the OpenTelemetry runtime status (v0.11)."""
+    from biomodel_monitor import observability as obs
+    obs.init_otel()
+    click.echo(json.dumps(obs.status(), indent=2, default=str))
+
+
+@main.command("modality-check")
+@click.option("--kind", required=True,
+              type=click.Choice(["image", "text", "tabular"]))
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {reference: {...}, current: {...}}")
+@click.option("--warn", default=0.10, show_default=True, type=float)
+@click.option("--alert", default=0.25, show_default=True, type=float)
+def modality_check_cmd(kind: str, input_path: str,
+                       warn: float, alert: float) -> None:
+    """Validate a per-modality summary against a reference (v0.11)."""
+    from biomodel_monitor.modality import check_modality
+    body = json.loads(Path(input_path).read_text())
+    res = check_modality(kind, body["reference"], body["current"],
+                         warn=warn, alert=alert)
+    click.echo(json.dumps(res.as_dict(), indent=2, default=str))
+
+
+@main.group("vector")
+def vector_grp() -> None:
+    """Embedding store + nearest-neighbor explanation (v0.11)."""
+
+
+@vector_grp.command("add")
+@click.option("--db", "db_path", required=True, type=click.Path())
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {namespace, items:[{record_id, embedding, metadata}]}")
+def vector_add_cmd(db_path: str, input_path: str) -> None:
+    """Add embeddings into the vector store."""
+    from biomodel_monitor.vector import VectorStore
+    body = json.loads(Path(input_path).read_text())
+    vs = VectorStore(db_path)
+    n = 0
+    for it in body.get("items", []):
+        vs.add(body["namespace"], it["record_id"], it["embedding"],
+               metadata=it.get("metadata") or {})
+        n += 1
+    vs.close()
+    click.echo(f"added {n} embeddings into namespace {body['namespace']!r}")
+
+
+@vector_grp.command("query")
+@click.option("--db", "db_path", required=True, type=click.Path(exists=True))
+@click.option("--namespace", required=True, type=str)
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {embedding: [...], k: int}")
+def vector_query_cmd(db_path: str, namespace: str, input_path: str) -> None:
+    """Find the k nearest historical neighbours for a query embedding."""
+    from biomodel_monitor.vector import VectorStore
+    body = json.loads(Path(input_path).read_text())
+    vs = VectorStore(db_path)
+    out = vs.explain(namespace, body["embedding"], k=int(body.get("k", 5)))
+    vs.close()
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("fingerprint")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True),
+              help="JSON: {canary_inputs_id, predictions:[[..]]}")
+@click.option("--compare-with", default=None, type=str,
+              help="Optional expected fingerprint to compare against.")
+def fingerprint_cmd(input_path: str, compare_with: str | None) -> None:
+    """Compute (and optionally compare) a model fingerprint (v0.11)."""
+    from biomodel_monitor.fingerprint import (
+        compare_fingerprints,
+        compute_fingerprint,
+    )
+    body = json.loads(Path(input_path).read_text())
+    fp = compute_fingerprint(body["canary_inputs_id"], body["predictions"])
+    out: dict = {"fingerprint": fp.as_dict()}
+    if compare_with:
+        out["comparison"] = compare_fingerprints(compare_with, fp.fingerprint)
+    click.echo(json.dumps(out, indent=2, default=str))
