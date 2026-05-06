@@ -274,7 +274,162 @@ class WassersteinResponseOut(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+# --------------------------------------------------------------------------- #
+# v0.10 — Closed loop
+# --------------------------------------------------------------------------- #
+
+
+class ALEnqueueItem(BaseModel):
+    record_id: str
+    score: float | None = None
+    probs: list[float] | None = None
+    strategy: str = "entropy"
+    note: str | None = None
+
+
+class ALEnqueueRequest(BaseModel):
+    model_id: str
+    model_version: str
+    items: list[ALEnqueueItem]
+
+
+class ALItemOut(BaseModel):
+    model_id: str
+    model_version: str
+    record_id: str
+    score: float
+    strategy: str
+    status: str
+    label: int | str | None = None
+    note: str | None = None
+    created_at: str
+    updated_at: str | None = None
+
+
+class ALLabelIn(BaseModel):
+    label: int | str
+    note: str | None = None
+
+
+class ConformalCalibrateRequest(BaseModel):
+    probs: list[list[float]]
+    labels: list[int]
+    alpha: float = 0.1
+    score_fn: str = "aps"
+
+
+class ConformalCalibrationOut(BaseModel):
+    score_fn: str
+    alpha: float
+    quantile: float
+    n_calibration: int
+
+
+class ConformalPredictRequest(BaseModel):
+    probs: list[list[float]]
+    calibration: ConformalCalibrationOut
+
+
+class ConformalPredictOut(BaseModel):
+    name: str
+    value: float
+    severity: str
+    sets: list[list[int]]
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowMcNemarRequest(BaseModel):
+    control_correct: list[int]
+    canary_correct: list[int]
+    alpha_warn: float = 0.05
+    alpha_alert: float = 0.01
+
+
+class ShadowBootstrapRequest(BaseModel):
+    control: list[float]
+    canary: list[float]
+    n_boot: int = 2000
+    seed: int = 0
+    warn: float = 0.02
+    alert: float = 0.05
+
+
+class ShadowResponseOut(BaseModel):
+    name: str
+    value: float
+    severity: str
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- #
+# v0.11 — Observability mesh & multi-modal
+# --------------------------------------------------------------------------- #
+
+
+class ModalityCheckRequest(BaseModel):
+    kind: str  # "image" | "text" | "tabular"
+    reference: dict[str, Any]
+    current: dict[str, Any]
+    warn: float = 0.10
+    alert: float = 0.25
+
+
+class ModalityResponseOut(BaseModel):
+    name: str
+    value: float
+    severity: str
+    kind: str
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class VectorAddRequest(BaseModel):
+    namespace: str
+    record_id: str
+    embedding: list[float]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VectorQueryRequest(BaseModel):
+    namespace: str
+    embedding: list[float]
+    k: int = 5
+
+
+class VectorNeighborOut(BaseModel):
+    record_id: str
+    distance: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FingerprintRequest(BaseModel):
+    canary_inputs_id: str
+    predictions: list[list[float]]
+
+
+class FingerprintOut(BaseModel):
+    canary_inputs_id: str
+    fingerprint: str
+    n_predictions: int
+    schema_version: int
+
+
+class FingerprintCompareRequest(BaseModel):
+    expected: str
+    actual: str
+
+
+class FingerprintCompareOut(BaseModel):
+    matches: bool
+    expected: str
+    actual: str
+    severity: str
+
+
 __all__ = [
+    "ALEnqueueItem",
+    "ALEnqueueRequest",
+    "ALItemOut",
+    "ALLabelIn",
     "AlertOut",
     "AnnotationIn",
     "AnnotationOut",
@@ -283,7 +438,15 @@ __all__ = [
     "CUSUMRequest",
     "CUSUMResponse",
     "ChangepointResponse",
+    "ConformalCalibrateRequest",
+    "ConformalCalibrationOut",
+    "ConformalPredictOut",
+    "ConformalPredictRequest",
     "EventOut",
+    "FingerprintCompareOut",
+    "FingerprintCompareRequest",
+    "FingerprintOut",
+    "FingerprintRequest",
     "ForecastResponse",
     "HealthResponse",
     "IncidentOut",
@@ -294,6 +457,8 @@ __all__ = [
     "MMDRequest",
     "MMDResponse",
     "MetricHistoryPoint",
+    "ModalityCheckRequest",
+    "ModalityResponseOut",
     "ModelRecordIn",
     "ModelRecordOut",
     "PolicyActionOut",
@@ -302,6 +467,12 @@ __all__ = [
     "RunPipelineRequest",
     "RunPipelineResponse",
     "RunSummary",
+    "ShadowBootstrapRequest",
+    "ShadowMcNemarRequest",
+    "ShadowResponseOut",
+    "VectorAddRequest",
+    "VectorNeighborOut",
+    "VectorQueryRequest",
     "WassersteinRequest",
     "WassersteinResponseOut",
     "WhatIfRequest",

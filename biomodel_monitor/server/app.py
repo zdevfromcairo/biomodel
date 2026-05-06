@@ -38,6 +38,10 @@ class AppSettings:
     # only when a registry is configured.
     registry_path: str | None = None
     policy_path: str | None = None
+    # Closed-loop active-learning queue (v0.10). Optional.
+    active_learning_path: str | None = None
+    # Vector embedding store for nearest-neighbor explanations (v0.11). Optional.
+    vector_store_path: str | None = None
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "AppSettings":
@@ -59,6 +63,8 @@ class AppSettings:
             batch_root=e.get("BIOMODEL_BATCH_ROOT") or None,
             registry_path=e.get("BIOMODEL_REGISTRY_PATH") or None,
             policy_path=e.get("BIOMODEL_POLICY_PATH") or None,
+            active_learning_path=e.get("BIOMODEL_ACTIVE_LEARNING_PATH") or None,
+            vector_store_path=e.get("BIOMODEL_VECTOR_STORE_PATH") or None,
         )
 
 
@@ -157,15 +163,28 @@ def create_app(
     from biomodel_monitor.schema.models import PredictionRecord
     from biomodel_monitor.server.events import Event, EventBus
     from biomodel_monitor.server.schemas import (
+        # v0.10
+        ALEnqueueRequest,
         AlertOut,
+        ALItemOut,
+        ALLabelIn,
         AnnotationIn,
         AnnotationOut,
         BaselineSummary,
         BatchSummary,
         ChangepointResponse,
+        ConformalCalibrateRequest,
+        ConformalCalibrationOut,
+        ConformalPredictOut,
+        ConformalPredictRequest,
         CUSUMRequest,
         CUSUMResponse,
         EventOut,
+        # v0.11
+        FingerprintCompareOut,
+        FingerprintCompareRequest,
+        FingerprintOut,
+        FingerprintRequest,
         ForecastResponse,
         HealthResponse,
         IncidentOut,
@@ -176,6 +195,8 @@ def create_app(
         MetricHistoryPoint,
         MMDRequest,
         MMDResponse,
+        ModalityCheckRequest,
+        ModalityResponseOut,
         ModelRecordIn,
         ModelRecordOut,
         PolicyActionOut,
@@ -184,6 +205,12 @@ def create_app(
         RunPipelineRequest,
         RunPipelineResponse,
         RunSummary,
+        ShadowBootstrapRequest,
+        ShadowMcNemarRequest,
+        ShadowResponseOut,
+        VectorAddRequest,
+        VectorNeighborOut,
+        VectorQueryRequest,
         WassersteinRequest,
         WassersteinResponseOut,
         WhatIfRequest,
@@ -337,6 +364,20 @@ def create_app(
     if settings.policy_path:
         from biomodel_monitor.policy import PolicyEngine as _PolicyEngine
         policy_engine = _PolicyEngine.from_yaml(Path(settings.policy_path).read_text())
+
+    # v0.10 — closed-loop active-learning queue. Optional.
+    al_queue = None
+    if settings.active_learning_path:
+        from biomodel_monitor.active_learning import (
+            ActiveLearningQueue as _ALQueue,
+        )
+        al_queue = _ALQueue(settings.active_learning_path)
+
+    # v0.11 — vector store for nearest-neighbor explanations. Optional.
+    vector_store = None
+    if settings.vector_store_path:
+        from biomodel_monitor.vector import VectorStore as _VectorStore
+        vector_store = _VectorStore(settings.vector_store_path)
 
     # Plugin registry (v0.7).
     plugin_registry = PluginRegistry()
@@ -1115,6 +1156,245 @@ def create_app(
     def sbom_endpoint(_=Depends(require_api_key)):
         from biomodel_monitor.security import build_sbom
         return build_sbom()
+
+    # ---------------------------------------------------------------- v0.10 --
+    def _require_al_queue():
+        if al_queue is None:
+            raise HTTPException(
+                503,
+                "active learning queue not configured "
+                "(set BIOMODEL_ACTIVE_LEARNING_PATH)",
+            )
+        return al_queue
+
+    @app.post("/active-learning/enqueue", response_model=list[ALItemOut])
+    def al_enqueue(
+        body: ALEnqueueRequest = Body(...),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        q = _require_al_queue()
+        try:
+            tenant.require("enqueue_label")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.active_learning import (
+            QueueItem,
+            score_record,
+        )
+        out = []
+        for it in body.items:
+            score = it.score
+            if score is None:
+                if it.probs is None:
+                    raise HTTPException(
+                        400, "each item must supply 'score' or 'probs'"
+                    )
+                try:
+                    score = score_record(it.probs, strategy=it.strategy)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+            qi = q.enqueue(QueueItem(
+                model_id=body.model_id,
+                model_version=body.model_version,
+                record_id=it.record_id,
+                score=float(score),
+                strategy=it.strategy,
+                note=it.note,
+            ))
+            out.append(qi)
+        if audit_log is not None:
+            audit_log.append(
+                "al_enqueue",
+                {"model_id": body.model_id,
+                 "model_version": body.model_version,
+                 "n": len(out)},
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
+        return [ALItemOut(**x.as_dict()) for x in out]
+
+    @app.get("/active-learning/{model_id}/{model_version}/queue",
+             response_model=list[ALItemOut])
+    def al_next_batch(model_id: str, model_version: str, limit: int = 10,
+                      _=Depends(require_api_key)):
+        q = _require_al_queue()
+        items = q.next_batch(model_id, model_version, limit=limit)
+        return [ALItemOut(**i.as_dict()) for i in items]
+
+    @app.get("/active-learning/{model_id}/{model_version}/stats")
+    def al_stats(model_id: str, model_version: str,
+                 _=Depends(require_api_key)):
+        q = _require_al_queue()
+        return q.stats(model_id, model_version)
+
+    @app.post("/active-learning/{model_id}/{model_version}/{record_id}/label",
+              response_model=ALItemOut)
+    def al_submit_label(
+        model_id: str, model_version: str, record_id: str,
+        body: ALLabelIn = Body(...),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        q = _require_al_queue()
+        try:
+            tenant.require("submit_label")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        try:
+            item = q.submit_label(model_id, model_version, record_id,
+                                  label=body.label, note=body.note)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if audit_log is not None:
+            audit_log.append(
+                "al_submit_label",
+                {"model_id": model_id, "model_version": model_version,
+                 "record_id": record_id, "label": body.label},
+                actor_tenant=tenant.tenant_id, actor_role=tenant.role,
+                actor_key_fp=tenant.api_key_id,
+            )
+        return ALItemOut(**item.as_dict())
+
+    @app.post("/conformal/calibrate", response_model=ConformalCalibrationOut)
+    def conformal_calibrate(
+        body: ConformalCalibrateRequest = Body(...),
+        tenant: TenantContext = Depends(get_tenant),
+    ):
+        try:
+            tenant.require("conformal_calibrate")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.conformal import calibrate
+        try:
+            cal = calibrate(body.probs, body.labels,
+                            alpha=body.alpha, score_fn=body.score_fn)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return ConformalCalibrationOut(**cal.as_dict())
+
+    @app.post("/conformal/predict", response_model=ConformalPredictOut)
+    def conformal_predict(body: ConformalPredictRequest = Body(...),
+                          _=Depends(require_api_key)):
+        from biomodel_monitor.conformal import (
+            ConformalCalibration,
+            predict_sets,
+        )
+        cal = ConformalCalibration(**body.calibration.model_dump())
+        try:
+            res = predict_sets(body.probs, cal)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return ConformalPredictOut(**res.as_dict())
+
+    @app.post("/shadow/mcnemar", response_model=ShadowResponseOut)
+    def shadow_mcnemar(body: ShadowMcNemarRequest = Body(...),
+                       tenant: TenantContext = Depends(get_tenant)):
+        try:
+            tenant.require("shadow_compare")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.shadow import mcnemar
+        try:
+            res = mcnemar(body.control_correct, body.canary_correct,
+                          alpha_warn=body.alpha_warn,
+                          alpha_alert=body.alpha_alert)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return ShadowResponseOut(**res.as_dict())
+
+    @app.post("/shadow/bootstrap", response_model=ShadowResponseOut)
+    def shadow_bootstrap(body: ShadowBootstrapRequest = Body(...),
+                         tenant: TenantContext = Depends(get_tenant)):
+        try:
+            tenant.require("shadow_compare")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.shadow import paired_bootstrap_diff
+        try:
+            res = paired_bootstrap_diff(
+                body.control, body.canary,
+                n_boot=body.n_boot, seed=body.seed,
+                warn=body.warn, alert=body.alert,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return ShadowResponseOut(**res.as_dict())
+
+    # ---------------------------------------------------------------- v0.11 --
+    @app.post("/modality/check", response_model=ModalityResponseOut)
+    def modality_check(body: ModalityCheckRequest = Body(...),
+                       tenant: TenantContext = Depends(get_tenant)):
+        try:
+            tenant.require("modality_check")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.modality import check_modality
+        try:
+            res = check_modality(
+                body.kind, body.reference, body.current,
+                warn=body.warn, alert=body.alert,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return ModalityResponseOut(**res.as_dict())
+
+    def _require_vector_store():
+        if vector_store is None:
+            raise HTTPException(
+                503,
+                "vector store not configured (set BIOMODEL_VECTOR_STORE_PATH)",
+            )
+        return vector_store
+
+    @app.post("/vector/add")
+    def vector_add(body: VectorAddRequest = Body(...),
+                   tenant: TenantContext = Depends(get_tenant)):
+        vs = _require_vector_store()
+        try:
+            tenant.require("vector_add")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        try:
+            vs.add(body.namespace, body.record_id,
+                   body.embedding, metadata=body.metadata)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "namespace": body.namespace,
+                "record_id": body.record_id}
+
+    @app.post("/vector/query", response_model=list[VectorNeighborOut])
+    def vector_query(body: VectorQueryRequest = Body(...),
+                     tenant: TenantContext = Depends(get_tenant)):
+        vs = _require_vector_store()
+        try:
+            tenant.require("vector_query")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        try:
+            results = vs.query(body.namespace, body.embedding, k=body.k)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return [VectorNeighborOut(**r.as_dict()) for r in results]
+
+    @app.post("/fingerprint", response_model=FingerprintOut)
+    def fingerprint_endpoint(body: FingerprintRequest = Body(...),
+                             tenant: TenantContext = Depends(get_tenant)):
+        try:
+            tenant.require("fingerprint_compute")
+        except Exception as exc:
+            raise HTTPException(403, str(exc)) from exc
+        from biomodel_monitor.fingerprint import compute_fingerprint
+        try:
+            fp = compute_fingerprint(body.canary_inputs_id, body.predictions)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return FingerprintOut(**fp.as_dict())
+
+    @app.post("/fingerprint/compare", response_model=FingerprintCompareOut)
+    def fingerprint_compare(body: FingerprintCompareRequest = Body(...),
+                            _=Depends(require_api_key)):
+        from biomodel_monitor.fingerprint import compare_fingerprints
+        result = compare_fingerprints(body.expected, body.actual)
+        return FingerprintCompareOut(**result)
 
     return app
 

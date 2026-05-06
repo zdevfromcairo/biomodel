@@ -27,6 +27,16 @@ PERMISSIONS: dict[str, Role] = {
     "whatif": "writer",
     "register_model": "writer",
     "add_lineage": "writer",
+    # v0.10 — closed loop.
+    "enqueue_label": "writer",
+    "submit_label": "operator",
+    "shadow_compare": "viewer",
+    "conformal_calibrate": "writer",
+    # v0.11 — observability mesh & multi-modal.
+    "modality_check": "viewer",
+    "vector_add": "writer",
+    "vector_query": "viewer",
+    "fingerprint_compute": "writer",
     # Admin.
     "manage_tenants": "admin",
     "quarantine_model": "admin",
